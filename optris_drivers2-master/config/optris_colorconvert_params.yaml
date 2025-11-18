@@ -1,0 +1,14 @@
+# optris_colorconvert_params.yaml
+
+optris_colorconvert_node:
+  ros__parameters:
+    camera_name: "optris_camera"  # Set a valid camera name
+    camera_info_url: ""  # Leave empty if you don't have a calibration file
+    input_image_topic: "/thermal_image"  # Replace with your actual input image topic
+    output_image_topic: "/thermal_image_colored"  # Desired output topic
+    colormap: "jet"  # Options: jet, hot, cool, etc.
+    min_temperature: 20.0  # Adjust as needed
+    max_temperature: 100.0  # Adjust as needed
+    temperature_unit: "celsius"  # 'celsius' or 'fahrenheit'
+    image_encoding: "mono16"  # Encoding of the input image
+
