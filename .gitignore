@@ -77,3 +77,6 @@ hri_server.zip
 
 dlib_files/dlib_landmark_predictor.dat
 dlib_files/dlib_landmark_predictor.dat
+
+# Superpowers brainstorm artifacts
+.superpowers/
