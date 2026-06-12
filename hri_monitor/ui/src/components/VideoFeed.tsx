@@ -1,9 +1,37 @@
+import { Video, VideoOff } from "lucide-react";
+import { useState } from "react";
+
 export function VideoFeed({ title, src }: { title: string; src: string }) {
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
   return (
-    <div className="rounded-xl bg-slate-900 border border-slate-800 p-4">
-      <h3 className="text-sm font-medium text-slate-400 mb-2">{title}</h3>
-      <img src={src} alt={title}
-           className="w-full rounded-lg bg-black aspect-video object-contain" />
+    <div className="glass p-4">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-medium" style={{ color: "var(--text-muted)" }}>
+        <Video size={15} /> {title}
+      </h3>
+      {failed ? (
+        <button
+          onClick={() => {
+            setFailed(false);
+            setRetry((r) => r + 1);
+          }}
+          className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-xl text-sm"
+          style={{
+            color: "var(--text-muted)",
+            background: "color-mix(in srgb, var(--text-muted) 8%, transparent)",
+          }}
+        >
+          <VideoOff size={22} />
+          No signal — click to retry
+        </button>
+      ) : (
+        <img
+          src={`${src}?r=${retry}`}
+          alt={title}
+          onError={() => setFailed(true)}
+          className="aspect-video w-full rounded-xl bg-black/80 object-contain"
+        />
+      )}
     </div>
   );
 }
