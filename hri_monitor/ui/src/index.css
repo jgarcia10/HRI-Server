@@ -1,1 +1,106 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+
+/* ---- Clinical Frost tokens. Light is primary. ---- */
+:root {
+  color-scheme: light;
+  --base: #fbfdff;
+  --base-2: #eef6fb;
+  --grid-dot: rgba(14, 165, 233, 0.14);
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(186, 210, 235, 0.8);
+  --glass-specular: rgba(255, 255, 255, 0.95);
+  --glass-shadow: rgba(14, 60, 110, 0.08);
+  --text: #0c1a28;
+  --text-muted: #5b7186;
+  --accent: #0284c7;
+  --accent-2: #0d9488;
+  --chart-gsr: #0284c7;
+  --chart-ppg: #e11d48;
+  --chart-blink: #7c3aed;
+  --chart-temp: #d97706;
+  --ok: #059669;
+  --warn: #d97706;
+  --err: #e11d48;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --base: #0b1220;
+  --base-2: #0b1220;
+  --grid-dot: rgba(125, 170, 220, 0.12);
+  --glass-bg: rgba(148, 184, 220, 0.08);
+  --glass-border: rgba(148, 184, 220, 0.18);
+  --glass-specular: rgba(200, 225, 255, 0.15);
+  --glass-shadow: rgba(0, 0, 0, 0.3);
+  --text: #eaf3fb;
+  --text-muted: #7e93ad;
+  --accent: #38bdf8;
+  --accent-2: #2dd4bf;
+  --chart-gsr: #38bdf8;
+  --chart-ppg: #fb7185;
+  --chart-blink: #a78bfa;
+  --chart-temp: #fbbf24;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #fb7185;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: linear-gradient(135deg, var(--base), var(--base-2));
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* Frosted panel — chrome only, never over data */
+@utility glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(8px) saturate(160%);
+  backdrop-filter: blur(8px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  border-radius: 1rem;
+  box-shadow: 0 6px 20px var(--glass-shadow), inset 0 1px 0 var(--glass-specular);
+}
+
+/* Blueprint dot-grid texture */
+@utility dot-grid {
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+/* Tabular numerals for live readouts — values must not jitter */
+@utility tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Glow on chart strokes; color injected per-chart via --glow-color */
+.chart-glow .recharts-area-curve {
+  filter: drop-shadow(0 0 3px var(--glow-color));
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Accessibility fallbacks: solid surfaces, no glow */
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--base);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-glow .recharts-area-curve { filter: none; }
+}
