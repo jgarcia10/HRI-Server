@@ -16,6 +16,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!hri_monitor/ui/src/lib/
 lib64/
 parts/
 sdist/

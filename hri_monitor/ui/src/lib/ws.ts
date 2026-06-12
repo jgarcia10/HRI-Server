@@ -29,8 +29,10 @@ export function useLiveData(): LiveState {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
     function connect() {
+      if (closed) return;
       ws = new WebSocket(`ws://${location.host}/ws`);
       ws.onopen = () => {
         retry.current = 1000;
@@ -59,7 +61,7 @@ export function useLiveData(): LiveState {
       ws.onclose = () => {
         setState((s) => ({ ...s, connected: false }));
         if (!closed) {
-          setTimeout(connect, retry.current);
+          reconnectTimer = setTimeout(connect, retry.current);
           retry.current = Math.min(retry.current * 2, 10000);
         }
       };
@@ -68,6 +70,7 @@ export function useLiveData(): LiveState {
     connect();
     return () => {
       closed = true;
+      clearTimeout(reconnectTimer);
       ws?.close();
     };
   }, []);
