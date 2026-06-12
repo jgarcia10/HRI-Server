@@ -11,6 +11,12 @@ class BaseSensor:
     stale. Subclasses implement connect()/read()/disconnect(); read() must
     call self.emit() for every sample and return quickly (< ~100 ms).
 
+    disconnect() must be idempotent and tolerate being called when connect()
+    failed or never ran.
+
+    A read() that blocks forever defeats both the watchdog and stop(); real
+    drivers must use timeouts on their underlying I/O.
+
     Status values: disabled, connecting, connected, reconnecting. Every
     transition is published on the bus as topic "device.status" with data
     {"device": <name>, "status": <status>}.
@@ -27,6 +33,7 @@ class BaseSensor:
         self._stop = threading.Event()
         self._last_emit = 0.0
         self._status = "disabled"
+        self._emitted_since_connect = False
 
     # ---- subclass contract --------------------------------------------------
     def connect(self):
@@ -45,6 +52,7 @@ class BaseSensor:
 
     def emit(self, topic: str, data) -> None:
         self._last_emit = time.monotonic()
+        self._emitted_since_connect = True
         self.bus.publish(topic, data)
 
     def start(self) -> None:
@@ -58,6 +66,8 @@ class BaseSensor:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                log.warning("%s: thread did not stop within 5s (read() appears blocked)", self.name)
         self._set_status("disabled")
 
     # ---- internals ------------------------------------------------------------
@@ -81,10 +91,13 @@ class BaseSensor:
                 first = False
                 self.connect()
                 self._set_status("connected")
-                backoff = self.initial_backoff
+                self._emitted_since_connect = False
                 self._last_emit = time.monotonic()
                 while not self._stop.is_set():
                     self.read()
+                    if self._emitted_since_connect:
+                        backoff = self.initial_backoff
+                        self._emitted_since_connect = False  # only reset once per connection
                     if time.monotonic() - self._last_emit > self.stale_after:
                         raise TimeoutError(f"no samples for {self.stale_after}s")
             except Exception as exc:

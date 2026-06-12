@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from hub.bus import MessageBus
 from hub.sensors.base import BaseSensor
 
@@ -73,3 +75,33 @@ def test_stale_data_triggers_reconnect():
         assert wait_for(lambda: "reconnecting" in statuses)
     finally:
         sensor.stop()
+
+
+def test_backoff_grows_when_connected_but_silent():
+    """A device that connects fine but never emits must back off exponentially."""
+    bus = MessageBus()
+    reconnects = []
+    bus.subscribe("device.status",
+                  lambda m: reconnects.append(time.time()) if m["data"]["status"] == "reconnecting" else None)
+
+    class SilentFast(BaseSensor):
+        name = "silentfast"
+        stale_after = 0.05
+        initial_backoff = 0.05
+        max_backoff = 1.0
+
+        def connect(self):
+            pass
+
+        def read(self):
+            time.sleep(0.01)
+
+    sensor = SilentFast(bus)
+    sensor.start()
+    try:
+        assert wait_for(lambda: len(reconnects) >= 4, timeout=5.0)
+    finally:
+        sensor.stop()
+    # gaps between consecutive reconnecting transitions must grow
+    gaps = [b - a for a, b in zip(reconnects, reconnects[1:4])]
+    assert gaps[-1] > gaps[0]
