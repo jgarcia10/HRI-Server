@@ -1,7 +1,5 @@
 import time
 
-import pytest
-
 from hub.bus import MessageBus
 from hub.sensors.base import BaseSensor
 
@@ -104,4 +102,4 @@ def test_backoff_grows_when_connected_but_silent():
         sensor.stop()
     # gaps between consecutive reconnecting transitions must grow
     gaps = [b - a for a, b in zip(reconnects, reconnects[1:4])]
-    assert gaps[-1] > gaps[0]
+    assert gaps[-1] > gaps[0] * 1.5

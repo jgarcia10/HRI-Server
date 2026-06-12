@@ -97,7 +97,7 @@ class BaseSensor:
                     self.read()
                     if self._emitted_since_connect:
                         backoff = self.initial_backoff
-                        self._emitted_since_connect = False  # only reset once per connection
+                        self._emitted_since_connect = False  # reset fires on each emit; backoff grows only in exception handler
                     if time.monotonic() - self._last_emit > self.stale_after:
                         raise TimeoutError(f"no samples for {self.stale_after}s")
             except Exception as exc:
