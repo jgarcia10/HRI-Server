@@ -1,7 +1,11 @@
 import asyncio
 import threading
+import time
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from .frames import FrameStore
 
@@ -12,6 +16,7 @@ STREAM_TOPICS = {
     "ppg.hr", "ppg.hrv", "model.estimates",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
+MJPEG_FPS = 15
 
 
 def create_app(bus, manager, ui_dir=None) -> FastAPI:
@@ -45,9 +50,27 @@ def create_app(bus, manager, ui_dir=None) -> FastAPI:
                 if items:
                     await ws.send_json({"type": "update", "items": items,
                                         "devices": manager.statuses()})
-        except WebSocketDisconnect:
+        except (WebSocketDisconnect, RuntimeError):
+            # RuntimeError covers "send after close" under real uvicorn
             pass
         finally:
             bus.unsubscribe("*", on_message)
+
+    @app.get("/stream/{feed}")
+    def stream(feed: str):
+        if not frames.has(feed):
+            return JSONResponse({"error": f"unknown feed '{feed}'"}, status_code=404)
+
+        def gen():
+            while True:
+                jpg = frames.jpeg(feed)
+                if jpg is not None:
+                    yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n")
+                time.sleep(1.0 / MJPEG_FPS)
+
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    if ui_dir and Path(ui_dir).is_dir():
+        app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
     return app
