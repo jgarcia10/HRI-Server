@@ -80,3 +80,7 @@ dlib_files/dlib_landmark_predictor.dat
 
 # Superpowers brainstorm artifacts
 .superpowers/
+
+# HRI Monitor
+node_modules/
+hri_monitor/data/

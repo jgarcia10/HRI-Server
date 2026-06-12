@@ -1,0 +1,25 @@
+# HRI Monitor configuration. Anything omitted falls back to built-in defaults.
+server:
+  host: 127.0.0.1
+  port: 8000
+  open_browser: true
+
+data_dir: data
+
+sensors:
+  shimmer:
+    enabled: true
+    simulate: true     # real Shimmer driver arrives in milestone 2
+    mac: null
+    sampling_rate: 200
+  thermal:
+    enabled: true
+    simulate: true     # real Optris driver arrives in milestone 2
+    xml: null
+  rgb:
+    enabled: true
+    simulate: true     # real V4L2 driver arrives in milestone 2
+    index: 0
+    width: 640
+    height: 480
+    fps: 30
