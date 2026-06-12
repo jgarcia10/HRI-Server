@@ -31,11 +31,15 @@ def main():
     app = create_app(bus, manager, ui_dir=ROOT / "ui_dist")
 
     host, port = config["server"]["host"], config["server"]["port"]
+    browser_timer = None
     if config["server"]["open_browser"] and not args.no_browser:
-        threading.Timer(1.5, webbrowser.open, args=[f"http://{host}:{port}"]).start()
+        browser_timer = threading.Timer(1.5, webbrowser.open, args=[f"http://{host}:{port}"])
+        browser_timer.start()
     try:
         uvicorn.run(app, host=host, port=port, log_level="info")
     finally:
+        if browser_timer is not None:
+            browser_timer.cancel()
         manager.stop_all()
 
 
