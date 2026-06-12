@@ -23,7 +23,7 @@ export default function App() {
 
   return (
     <div className="dot-grid flex min-h-screen">
-      <aside className="glass sticky top-0 m-3 flex h-[calc(100vh-1.5rem)] w-56 shrink-0 flex-col p-4">
+      <aside className="glass sticky top-3 m-3 flex h-[calc(100vh-1.5rem)] w-56 shrink-0 flex-col p-4">
         <div className="mb-6 flex items-center gap-2.5">
           <Logo size={30} />
           <div>

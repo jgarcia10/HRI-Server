@@ -3,9 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>HRI Monitor</title>
-    <script type="module" crossorigin src="/assets/index-CWGt8dOo.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CqDucvdg.css">
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("hri-theme");
+          if (t !== "light" && t !== "dark") {
+            t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          }
+          document.documentElement.dataset.theme = t;
+        } catch (e) {
+          var d = false;
+          try { d = matchMedia("(prefers-color-scheme: dark)").matches; } catch (e2) {}
+          document.documentElement.dataset.theme = d ? "dark" : "light";
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CJ0Oy5T_.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DpkcZYQV.css">
   </head>
   <body>
     <div id="root"></div>
