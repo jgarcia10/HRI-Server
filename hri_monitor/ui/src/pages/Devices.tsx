@@ -1,9 +1,10 @@
-import { Cpu, Thermometer, Waves } from "lucide-react";
+import { Cpu, Link2, Loader2, Thermometer, Waves } from "lucide-react";
+import { useState } from "react";
 import { DeviceCard, Field, Select } from "../components/DeviceCard";
 import { BluetoothScan } from "../components/BluetoothScan";
-import { useDevices } from "../lib/devices";
+import { btBind, useDevices } from "../lib/devices";
 
-const THERMAL_XMLS = ["15030138.xml", "16070070.xml", "first_camera.xml"];
+const FALLBACK_XMLS = ["15030138.xml", "16070070.xml", "first_camera.xml"];
 
 export function Devices() {
   const { state, busy, setConfig, action } = useDevices();
@@ -11,6 +12,25 @@ export function Devices() {
   const rgb = d.rgb?.config ?? {};
   const thermal = d.thermal?.config ?? {};
   const shimmer = d.shimmer?.config ?? {};
+  const xmls = state.options.thermal_xml.length ? state.options.thermal_xml : FALLBACK_XMLS;
+
+  const [binding, setBinding] = useState(false);
+  const [bindMsg, setBindMsg] = useState("");
+
+  const bindAndConnect = async () => {
+    if (!shimmer.mac) {
+      setBindMsg("Scan & pair the Shimmer first so we have its MAC.");
+      return;
+    }
+    setBinding(true);
+    setBindMsg("");
+    try {
+      const r = await btBind(shimmer.mac, shimmer.channel ?? 6);
+      setBindMsg(r.ok ? `Bound ${r.port} — connecting…` : (r.reason ?? "bind failed"));
+    } finally {
+      setBinding(false);
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -21,7 +41,8 @@ export function Devices() {
         onRestart={() => action("thermal", "restart")} onDisconnect={() => action("thermal", "disconnect")}>
         <Field label="Calibration">
           <Select value={thermal.xml ?? ""} onChange={(e) => setConfig("thermal", { xml: e.target.value })}>
-            {THERMAL_XMLS.map((x) => <option key={x} value={x}>{x}</option>)}
+            <option value="">— select XML —</option>
+            {xmls.map((x) => <option key={x} value={x}>{x}</option>)}
           </Select>
         </Field>
         <Field label="Detector"><span className="text-xs" style={{ color: "var(--text-muted)" }}>dlib (thermal-trained)</span></Field>
@@ -41,7 +62,7 @@ export function Devices() {
           </Select>
         </Field>
         <Field label="Resolution">
-          <Select value={`${rgb.width}x${rgb.height}`}
+          <Select value={`${rgb.width ?? 640}x${rgb.height ?? 480}`}
             onChange={(e) => { const [w, h] = e.target.value.split("x").map(Number); setConfig("rgb", { width: w, height: h }); }}>
             <option value="640x480">640×480</option>
             <option value="1280x720">1280×720</option>
@@ -63,13 +84,11 @@ export function Devices() {
             ))}
           </Select>
         </Field>
-        {!shimmer.port && (
-          <Field label="BT channel">
-            <Select value={shimmer.channel ?? 1} onChange={(e) => setConfig("shimmer", { channel: Number(e.target.value) })}>
-              {[1, 2, 3, 4, 5, 6, 7, 8].map((c) => <option key={c} value={c}>{c}</option>)}
-            </Select>
-          </Field>
-        )}
+        <Field label="Channel">
+          <Select value={shimmer.channel ?? 1} onChange={(e) => setConfig("shimmer", { channel: Number(e.target.value) })}>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((c) => <option key={c} value={c}>{c}</option>)}
+          </Select>
+        </Field>
         <Field label="MAC"><span className="text-xs" style={{ color: "var(--text)" }}>{shimmer.mac ?? "— not paired —"}</span></Field>
         <Field label="Sampling">
           <Select value={shimmer.sampling_rate ?? 200} onChange={(e) => setConfig("shimmer", { sampling_rate: Number(e.target.value) })}>
@@ -79,9 +98,16 @@ export function Devices() {
           </Select>
         </Field>
         <BluetoothScan onPaired={(mac) => setConfig("shimmer", { mac, simulate: false })} />
-        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-          No serial port? Bind one first: <code>sudo rfcomm connect /dev/rfcomm0 {shimmer.mac ?? "&lt;MAC&gt;"} 6</code> — then pick it above.
-        </p>
+        <button onClick={bindAndConnect} disabled={binding}
+          className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold"
+          style={{ background: "var(--accent)", color: "#fff" }}>
+          {binding ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+          Bind &amp; connect (ch {shimmer.channel ?? 6})
+        </button>
+        {bindMsg && (
+          <pre className="whitespace-pre-wrap text-[10px]"
+            style={{ color: bindMsg.startsWith("Bound") ? "var(--ok)" : "var(--text-muted)" }}>{bindMsg}</pre>
+        )}
       </DeviceCard>
     </div>
   );

@@ -10,12 +10,15 @@ export type Camera = { index: number; path: string; name: string };
 export type BtDevice = { mac: string; name: string; paired: boolean };
 export type DevicesState = {
   devices: Record<string, { config: DeviceConfig; status: string }>;
-  options: { cameras: Camera[]; sampling_rates: number[]; serial_ports: string[] };
+  options: {
+    cameras: Camera[]; sampling_rates: number[];
+    serial_ports: string[]; thermal_xml: string[];
+  };
 };
 
 const EMPTY: DevicesState = {
   devices: {},
-  options: { cameras: [], sampling_rates: [], serial_ports: [] },
+  options: { cameras: [], sampling_rates: [], serial_ports: [], thermal_xml: [] },
 };
 
 export function useDevices() {
@@ -83,6 +86,16 @@ export async function btPair(mac: string, pin = "1234"): Promise<{ ok: boolean; 
   const r = await fetch("/api/bluetooth/pair", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mac, pin }),
+  });
+  return r.json();
+}
+
+export async function btBind(
+  mac: string, channel: number,
+): Promise<{ ok: boolean; port?: string; reason?: string }> {
+  const r = await fetch("/api/bluetooth/bind", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mac, channel }),
   });
   return r.json();
 }

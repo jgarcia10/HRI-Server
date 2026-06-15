@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import bluetooth, cameras
+from . import assets, bluetooth, cameras
 from .config import save_config
 from .frames import FrameStore
 
@@ -46,6 +46,7 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml") -> FastAPI:
                 "cameras": cameras.list_cameras(),
                 "sampling_rates": SAMPLING_RATES,
                 "serial_ports": bluetooth.list_serial_ports(),
+                "thermal_xml": assets.list_thermal_xml(),
             },
         }
 
@@ -98,6 +99,20 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml") -> FastAPI:
     @app.post("/api/bluetooth/pair")
     def bt_pair(body: BtPair):
         return bluetooth.pair(body.mac, body.pin)
+
+    class BtBind(BaseModel):
+        mac: str
+        channel: int = 1
+
+    @app.post("/api/bluetooth/bind")
+    def bt_bind(body: BtBind):
+        """Bind /dev/rfcommN for the Shimmer and, on success, point the shimmer
+        device at that serial port + switch it to real — one click, no terminal."""
+        result = bluetooth.bind_rfcomm(body.mac, body.channel)
+        if result.get("ok") and "shimmer" in manager.config.get("sensors", {}):
+            manager.reconfigure("shimmer", {"port": result["port"], "simulate": False})
+            save_config(config_path, manager.config)
+        return result
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

@@ -15,7 +15,7 @@ sensors:
   thermal:
     enabled: true
     simulate: true     # real Optris driver arrives in milestone 2
-    xml: null
+    xml: 15030138.xml
   rgb:
     enabled: true
     simulate: true     # real V4L2 driver arrives in milestone 2

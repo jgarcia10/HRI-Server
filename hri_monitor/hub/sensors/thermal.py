@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 
+from ..assets import HRI_ROOT, resolve_asset
 from .base import BaseSensor
 from .thermal_codec import read_message
 
@@ -44,14 +45,23 @@ class ThermalProcess(BaseSensor):
         return msg
 
     def connect(self):
-        for label, path in [("xml", self.xml), ("detector", self.detector), ("predictor", self.predictor)]:
-            if not path or not os.path.exists(path):
-                raise RuntimeError(f"thermal asset not found ({label}): {path}")
+        # Resolve asset paths against cwd / hri_monitor / repo root, since the
+        # dlib models + calibration XML usually live at the repo root.
+        resolved = {}
+        for label in ("xml", "detector", "predictor"):
+            raw = getattr(self, label)
+            path = resolve_asset(raw)
+            if path is None:
+                raise RuntimeError(
+                    f"thermal asset not found ({label}): {raw!r} — put it at the repo "
+                    f"root or set an absolute path in the Devices page / config.yaml")
+            resolved[label] = path
         os.makedirs(self.format_dir, exist_ok=True)
         self._proc = subprocess.Popen(
             [sys.executable, "-m", "hub.sensors.thermal_worker",
-             "--xml", self.xml, "--detector", self.detector,
-             "--predictor", self.predictor, "--format-dir", self.format_dir],
+             "--xml", resolved["xml"], "--detector", resolved["detector"],
+             "--predictor", resolved["predictor"], "--format-dir", self.format_dir],
+            cwd=HRI_ROOT,  # so the worker can import `hub` regardless of launch dir
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self._stdout = self._proc.stdout
         try:

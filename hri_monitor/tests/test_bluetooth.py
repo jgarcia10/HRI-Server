@@ -1,4 +1,15 @@
-from hub.bluetooth import parse_devices, pair_commands
+from hub.bluetooth import bind_commands, free_rfcomm_index, pair_commands, parse_devices
+
+
+def test_free_rfcomm_index_skips_taken():
+    n, dev = free_rfcomm_index(existing={"/dev/rfcomm0", "/dev/rfcomm1"})
+    assert n == 2 and dev == "/dev/rfcomm2"
+
+
+def test_bind_commands_direct_then_sudo():
+    cmds = bind_commands(3, "44:B7:D0:2E:23:FC", 6)
+    assert cmds[0] == ["rfcomm", "bind", "3", "44:B7:D0:2E:23:FC", "6"]
+    assert cmds[1] == ["sudo", "-n", "rfcomm", "bind", "3", "44:B7:D0:2E:23:FC", "6"]
 
 
 def test_parse_bluetoothctl_devices():
