@@ -41,15 +41,29 @@ def scan(seconds: int = 8) -> list[dict]:
         return []
 
 
+def pair_commands(mac: str, pin: str = "1234") -> str:
+    """bluetoothctl stdin script: register a PIN agent, pair, supply PIN, trust.
+    The PIN line is queued after `pair` so it answers the agent's prompt."""
+    return "\n".join([
+        "agent KeyboardOnly",
+        "default-agent",
+        f"pair {mac}",
+        pin,
+        f"trust {mac}",
+        "quit",
+    ]) + "\n"
+
+
 def pair(mac: str, pin: str = "1234") -> dict:
     try:
-        p = _run(["bluetoothctl", "pair", mac], 25)
-        ok = "Paired: yes" in p.stdout or "successful" in p.stdout.lower()
-        if ok:
-            _run(["bluetoothctl", "trust", mac], 5)
-        return {"ok": ok, "reason": p.stdout.strip()[-200:] or p.stderr.strip()[-200:]}
+        p = subprocess.run(
+            ["bluetoothctl"], input=pair_commands(mac, pin),
+            capture_output=True, text=True, timeout=30)
+        out = (p.stdout or "") + (p.stderr or "")
+        ok = "Paired: yes" in out or "pairing successful" in out.lower()
+        return {"ok": ok, "reason": out.strip()[-300:]}
     except subprocess.TimeoutExpired:
-        return {"ok": False, "reason": "pair timed out (confirm PIN on device)"}
+        return {"ok": False, "reason": "pair timed out (confirm/accept PIN on the device or OS)"}
     except Exception as e:
         return {"ok": False, "reason": str(e)}
 
