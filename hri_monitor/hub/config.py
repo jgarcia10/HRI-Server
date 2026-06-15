@@ -8,7 +8,13 @@ DEFAULTS = {
     "data_dir": "data",
     "sensors": {
         "shimmer": {"enabled": True, "simulate": True, "mac": None, "sampling_rate": 200},
-        "thermal": {"enabled": True, "simulate": True, "xml": None},
+        "thermal": {
+            "enabled": True, "simulate": True,
+            "xml": "15030138.xml",
+            "detector": "dlib_files/dlib_face_detector.svm",
+            "predictor": "dlib_files/dlib_landmark_predictor.dat",
+            "format_dir": "/tmp/optris",
+        },
         "rgb": {"enabled": True, "simulate": True, "index": 0, "width": 640, "height": 480, "fps": 30},
     },
 }
@@ -30,3 +36,9 @@ def load_config(path: Path | str = "config.yaml") -> dict:
     if path.exists():
         user = yaml.safe_load(path.read_text()) or {}
     return _merge(DEFAULTS, user)
+
+
+def save_config(path: Path | str, cfg: dict) -> None:
+    """Persist the full config dict to YAML (generated file; comments not kept)."""
+    path = Path(path)
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False))
