@@ -77,6 +77,9 @@ def main():
             shape = predictor(display, rect)
             xs = [p.x for p in shape.parts()]
             ys = [p.y for p in shape.parts()]
+            # Draw all 68 facial landmarks (blue dots) — same as hri_server.py.
+            for x, y in zip(xs, ys):
+                cv2.circle(display, (x, y), 1, (255, 0, 0), 2)
             roi = RegionsOfInterest(xs, ys)
             sx, sy = tw.value / pw.value, th.value / ph.value
             for name, box in roi.get(["forehead", "left_cheek", "right_cheek", "nose"]).items():
@@ -84,16 +87,18 @@ def main():
                 cv2.rectangle(display, (x0, y0), (x1, y1), (0, 255, 0), 2)
                 tx0, ty0, tx1, ty1 = scale_roi_to_thermal((x0, y0, x1, y1), sx, sy, tw.value, th.value)
                 if tx1 > tx0 and ty1 > ty0:
-                    temps[name] = round(float(np.mean(tmap[ty0:ty1, tx0:tx1])), 2)
+                    avg = round(float(np.mean(tmap[ty0:ty1, tx0:tx1])), 2)
+                    temps[name] = avg
+                    cv2.putText(display, f"{avg:.1f}C", (x0, y0 - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
         if temps and all(v is not None for v in temps.values()):
             last_valid = temps.copy()
         elif last_valid:
             temps = last_valid.copy()
-        # Detection ran on the BGR-reversed `display` (to match the trained dlib
-        # model); emit in the SDK's native palette order so the displayed warm/
-        # cold colors aren't swapped (green ROI overlays are unaffected — only
-        # the R/B channels swap). Overlays drawn on `display` carry over.
-        out.write(encode_message(temps, display[:, :, ::-1].copy()))
+        # Emit exactly as hri_server.py served its /thermal view: the reversed
+        # palette with ROI overlays. Correct colours depend on the right
+        # Formats.def (the usb_init format dir), not on the channel order.
+        out.write(encode_message(temps, display))
         out.flush()
         time.sleep(0.03)
 
