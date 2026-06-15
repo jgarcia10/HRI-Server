@@ -3,6 +3,7 @@ messages to stdout. Ported from hri_server.py capture_loop(). Runs in its own
 process so an SDK segfault cannot crash the hub."""
 import argparse
 import ctypes as ct
+import ctypes.util  # noqa: F401 — populates ct.util for find_library() below
 import sys
 import time
 
@@ -27,7 +28,14 @@ def main():
     ap.add_argument("--detector", required=True)
     ap.add_argument("--predictor", required=True)
     ap.add_argument("--format-dir", required=True)
+    ap.add_argument("--out-fd", type=int, default=1,
+                    help="fd to write framed messages to (default stdout). A "
+                         "dedicated fd keeps the binary protocol clean from the "
+                         "Optris SDK / library logging that pollutes stdout.")
     args = ap.parse_args()
+    import os
+
+    out = os.fdopen(args.out_fd, "wb")
 
     import cv2
     import dlib
@@ -49,7 +57,6 @@ def main():
     last_detect = 0.0
     rect = None
     last_valid = {}
-    out = sys.stdout.buffer
 
     while True:
         if libir.evo_irimager_get_thermal_palette_image_metadata(

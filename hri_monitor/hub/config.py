@@ -14,7 +14,7 @@ DEFAULTS = {
             "xml": "15030138.xml",
             "detector": "dlib_files/dlib_face_detector.svm",
             "predictor": "dlib_files/dlib_landmark_predictor.dat",
-            "format_dir": "/tmp/optris",
+            "format_dir": "/usr/share/libirimager",
         },
         "rgb": {"enabled": True, "simulate": True, "index": 0, "width": 640, "height": 480, "fps": 30},
     },

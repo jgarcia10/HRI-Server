@@ -11,6 +11,28 @@ from .base import BaseSensor
 from .thermal_codec import read_message
 
 
+def _drain_stderr(proc) -> str:
+    """Read whatever is already buffered on the worker's stderr WITHOUT blocking
+    on EOF (the worker may be wedged in an uninterruptible syscall)."""
+    if proc is None or proc.stderr is None:
+        return ""
+    try:
+        fd = proc.stderr.fileno()
+        os.set_blocking(fd, False)
+        data = b""
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            data += chunk
+        return data.decode("utf-8", "replace")[-300:]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 class ThermalProcess(BaseSensor):
     name = "thermal"
     read_timeout = 10.0
@@ -57,19 +79,30 @@ class ThermalProcess(BaseSensor):
                     f"root or set an absolute path in the Devices page / config.yaml")
             resolved[label] = path
         os.makedirs(self.format_dir, exist_ok=True)
+        # Dedicated pipe for the binary frame protocol — keeps it clean from the
+        # Optris SDK / dlib / OpenCV logging that pollutes the worker's stdout.
+        frame_r, frame_w = os.pipe()
         self._proc = subprocess.Popen(
             [sys.executable, "-m", "hub.sensors.thermal_worker",
              "--xml", resolved["xml"], "--detector", resolved["detector"],
-             "--predictor", resolved["predictor"], "--format-dir", self.format_dir],
+             "--predictor", resolved["predictor"], "--format-dir", self.format_dir,
+             "--out-fd", str(frame_w)],
             cwd=HRI_ROOT,  # so the worker can import `hub` regardless of launch dir
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        self._stdout = self._proc.stdout
+            pass_fds=(frame_w,),
+            stdout=subprocess.DEVNULL,  # SDK/library banner noise — discarded
+            stderr=subprocess.PIPE)     # real errors (Formats.def, usb_init, …)
+        os.close(frame_w)  # parent keeps only the read end
+        self._stdout = os.fdopen(frame_r, "rb", buffering=0)
         try:
             first = self._read_message_timed(self.read_timeout)
-        except Exception:
-            err = self._proc.stderr.read().decode("utf-8", "replace")[-300:] if self._proc.stderr else ""
+        except Exception as exc:
+            # Grab whatever the worker already wrote to stderr (the SDK error),
+            # then kill it. Both are non-blocking: a worker wedged in an
+            # uninterruptible SDK/USB syscall (e.g. no camera) can't be reaped
+            # promptly, so we must not block reading its stderr to EOF.
+            err = _drain_stderr(self._proc)
             self.disconnect()
-            raise RuntimeError(f"thermal worker failed to start: {err}")
+            raise RuntimeError(f"thermal worker failed to start: {err or exc}")
         self._emit_message(first)
 
     def read(self):
@@ -82,6 +115,12 @@ class ThermalProcess(BaseSensor):
         self.emit("thermal.frame", {"frame": frame})
 
     def disconnect(self):
+        if self._stdout is not None:
+            try:
+                self._stdout.close()  # close the frame-pipe read end
+            except Exception:  # noqa: BLE001
+                pass
+            self._stdout = None
         if self._proc is not None:
             self._proc.terminate()
             try:
@@ -89,4 +128,3 @@ class ThermalProcess(BaseSensor):
             except subprocess.TimeoutExpired:
                 self._proc.kill()
             self._proc = None
-            self._stdout = None
