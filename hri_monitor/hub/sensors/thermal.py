@@ -1,8 +1,10 @@
 """Hub-side proxy for the isolated Optris thermal worker subprocess. The proxy
 is a BaseSensor; connect() spawns the worker, read() emits framed messages."""
 import os
+import select
 import subprocess
 import sys
+import time
 
 from .base import BaseSensor
 from .thermal_codec import read_message
@@ -10,6 +12,7 @@ from .thermal_codec import read_message
 
 class ThermalProcess(BaseSensor):
     name = "thermal"
+    read_timeout = 10.0
     stale_after = 8.0
 
     def __init__(self, bus, xml=None, detector=None, predictor=None, format_dir="/tmp/optris"):
@@ -20,6 +23,25 @@ class ThermalProcess(BaseSensor):
         self.format_dir = format_dir
         self._proc = None
         self._stdout = None
+
+    def _read_message_timed(self, timeout):
+        """Read one framed message, raising TimeoutError if the worker produces
+        nothing within `timeout`. Polls in <=1s slices so stop() stays responsive."""
+        fd = self._stdout.fileno()
+        end = time.monotonic() + timeout
+        while True:
+            if self._stop.is_set():
+                raise RuntimeError("stopping")
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"thermal worker silent for {timeout}s — assuming wedged")
+            r, _, _ = select.select([fd], [], [], min(remaining, 1.0))
+            if r:
+                break
+        msg = read_message(self._stdout)
+        if msg is None:
+            raise RuntimeError("thermal worker died (pipe EOF)")
+        return msg
 
     def connect(self):
         for label, path in [("xml", self.xml), ("detector", self.detector), ("predictor", self.predictor)]:
@@ -32,16 +54,16 @@ class ThermalProcess(BaseSensor):
              "--predictor", self.predictor, "--format-dir", self.format_dir],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self._stdout = self._proc.stdout
-        first = read_message(self._stdout)
-        if first is None:
+        try:
+            first = self._read_message_timed(self.read_timeout)
+        except Exception:
             err = self._proc.stderr.read().decode("utf-8", "replace")[-300:] if self._proc.stderr else ""
+            self.disconnect()
             raise RuntimeError(f"thermal worker failed to start: {err}")
         self._emit_message(first)
 
     def read(self):
-        msg = read_message(self._stdout)
-        if msg is None:
-            raise RuntimeError("thermal worker died (pipe EOF)")
+        msg = self._read_message_timed(self.read_timeout)
         self._emit_message(msg)
 
     def _emit_message(self, msg):

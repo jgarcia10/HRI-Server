@@ -40,6 +40,9 @@ class RealRGB(BaseSensor):
         self._blink = BlinkRate()
 
     def read(self):
+        # NOTE: cv2.VideoCapture.read() has no timeout; a wedged-but-enumerated
+        # V4L2 device can park here. In practice a broken device returns ok=False
+        # (handled below) rather than hanging. No clean stdlib fix; accepted for now.
         cv2 = self._cv2
         ok, frame = self._cap.read()
         if not ok:
