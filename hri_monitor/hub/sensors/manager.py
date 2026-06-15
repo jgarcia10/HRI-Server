@@ -26,7 +26,8 @@ class SensorManager:
                                  height=c["height"], fps=c["fps"]))
         if name == "shimmer":
             return (SimulatedShimmer(self.bus) if c["simulate"]
-                    else RealShimmer(self.bus, mac=c["mac"], sampling_rate=c["sampling_rate"]))
+                    else RealShimmer(self.bus, mac=c["mac"], sampling_rate=c["sampling_rate"],
+                                     channel=c.get("channel", 1), port=c.get("port")))
         if name == "thermal":
             return (SimulatedThermal(self.bus) if c["simulate"]
                     else ThermalProcess(self.bus, xml=c["xml"], detector=c["detector"],

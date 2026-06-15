@@ -54,7 +54,23 @@ export function Devices() {
         status={d.shimmer?.status ?? "disabled"} simulate={shimmer.simulate ?? true} busy={busy.shimmer}
         onToggleSim={(sim) => setConfig("shimmer", { simulate: sim })}
         onRestart={() => action("shimmer", "restart")} onDisconnect={() => action("shimmer", "disconnect")}>
-        <Field label="Device"><span className="text-xs" style={{ color: "var(--text)" }}>{shimmer.mac ?? "— not paired —"}</span></Field>
+        <Field label="Connection">
+          <Select value={shimmer.port ?? ""}
+            onChange={(e) => setConfig("shimmer", { port: e.target.value, simulate: false })}>
+            <option value="">Bluetooth socket (ch {shimmer.channel ?? 1})</option>
+            {state.options.serial_ports.map((p) => (
+              <option key={p} value={p}>Serial · {p}</option>
+            ))}
+          </Select>
+        </Field>
+        {!shimmer.port && (
+          <Field label="BT channel">
+            <Select value={shimmer.channel ?? 1} onChange={(e) => setConfig("shimmer", { channel: Number(e.target.value) })}>
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((c) => <option key={c} value={c}>{c}</option>)}
+            </Select>
+          </Field>
+        )}
+        <Field label="MAC"><span className="text-xs" style={{ color: "var(--text)" }}>{shimmer.mac ?? "— not paired —"}</span></Field>
         <Field label="Sampling">
           <Select value={shimmer.sampling_rate ?? 200} onChange={(e) => setConfig("shimmer", { sampling_rate: Number(e.target.value) })}>
             {(state.options.sampling_rates.length ? state.options.sampling_rates : [128, 200, 256, 512]).map((r) => (
@@ -63,6 +79,9 @@ export function Devices() {
           </Select>
         </Field>
         <BluetoothScan onPaired={(mac) => setConfig("shimmer", { mac, simulate: false })} />
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+          No serial port? Bind one first: <code>sudo rfcomm connect /dev/rfcomm0 {shimmer.mac ?? "&lt;MAC&gt;"} 6</code> — then pick it above.
+        </p>
       </DeviceCard>
     </div>
   );

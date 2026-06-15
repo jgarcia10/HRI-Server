@@ -7,7 +7,8 @@ DEFAULTS = {
     "server": {"host": "127.0.0.1", "port": 8000, "open_browser": True},
     "data_dir": "data",
     "sensors": {
-        "shimmer": {"enabled": True, "simulate": True, "mac": None, "sampling_rate": 200},
+        "shimmer": {"enabled": True, "simulate": True, "mac": None, "sampling_rate": 200,
+                    "channel": 1, "port": None},
         "thermal": {
             "enabled": True, "simulate": True,
             "xml": "15030138.xml",

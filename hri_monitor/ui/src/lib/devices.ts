@@ -4,6 +4,7 @@ export type DeviceConfig = {
   simulate?: boolean;
   index?: number; width?: number; height?: number; fps?: number;
   xml?: string; mac?: string; sampling_rate?: number;
+  channel?: number; port?: string | null;
 };
 export type Camera = { index: number; path: string; name: string };
 export type BtDevice = { mac: string; name: string; paired: boolean };

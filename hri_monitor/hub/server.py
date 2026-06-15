@@ -58,10 +58,16 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml") -> FastAPI:
         xml: str | None = None
         mac: str | None = None
         sampling_rate: int | None = None
+        channel: int | None = None
+        port: str | None = None
 
     @app.post("/api/devices/{name}/config")
     def set_device_config(name: str, body: DeviceConfig):
         updates = {k: v for k, v in body.model_dump().items() if v is not None}
+        # An empty-string port means "use Bluetooth socket, not a serial port":
+        # apply it explicitly since the None-strip above would otherwise drop it.
+        if body.port == "":
+            updates["port"] = None
         manager.reconfigure(name, updates)
         save_config(config_path, manager.config)
         return {"ok": True, "config": manager.config["sensors"].get(name)}
