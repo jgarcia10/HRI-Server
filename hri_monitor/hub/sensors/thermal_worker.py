@@ -89,7 +89,11 @@ def main():
             last_valid = temps.copy()
         elif last_valid:
             temps = last_valid.copy()
-        out.write(encode_message(temps, display))
+        # Detection ran on the BGR-reversed `display` (to match the trained dlib
+        # model); emit in the SDK's native palette order so the displayed warm/
+        # cold colors aren't swapped (green ROI overlays are unaffected — only
+        # the R/B channels swap). Overlays drawn on `display` carry over.
+        out.write(encode_message(temps, display[:, :, ::-1].copy()))
         out.flush()
         time.sleep(0.03)
 
