@@ -85,3 +85,6 @@ dlib_files/dlib_landmark_predictor.dat
 # HRI Monitor
 node_modules/
 hri_monitor/data/
+
+# Runtime device config (machine-specific; edit live via the Devices page)
+hri_monitor/config.yaml
