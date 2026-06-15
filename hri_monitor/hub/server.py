@@ -6,7 +6,10 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from . import bluetooth, cameras
+from .config import save_config
 from .frames import FrameStore
 
 # Numeric topics forwarded to the dashboard. Frame topics carry numpy arrays
@@ -19,7 +22,7 @@ WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
 
 
-def create_app(bus, manager, ui_dir=None) -> FastAPI:
+def create_app(bus, manager, ui_dir=None, config_path="config.yaml") -> FastAPI:
     app = FastAPI(title="HRI Monitor")
     frames = FrameStore(bus, {"thermal": "thermal.frame", "rgb": "rgb.frame"})
     app.state.frames = frames
@@ -27,6 +30,68 @@ def create_app(bus, manager, ui_dir=None) -> FastAPI:
     @app.get("/api/status")
     def status():
         return {"devices": manager.statuses()}
+
+    SAMPLING_RATES = [128, 200, 256, 512]
+
+    @app.get("/api/devices")
+    def devices():
+        cfg = getattr(manager, "config", {}).get("sensors", {})
+        st = manager.statuses()
+        out = {}
+        for name, c in cfg.items():
+            out[name] = {"config": c, "status": st.get(name, "disabled")}
+        return {
+            "devices": out,
+            "options": {
+                "cameras": cameras.list_cameras(),
+                "sampling_rates": SAMPLING_RATES,
+                "serial_ports": bluetooth.list_serial_ports(),
+            },
+        }
+
+    class DeviceConfig(BaseModel):
+        simulate: bool | None = None
+        index: int | None = None
+        width: int | None = None
+        height: int | None = None
+        fps: int | None = None
+        xml: str | None = None
+        mac: str | None = None
+        sampling_rate: int | None = None
+
+    @app.post("/api/devices/{name}/config")
+    def set_device_config(name: str, body: DeviceConfig):
+        updates = {k: v for k, v in body.model_dump().items() if v is not None}
+        manager.reconfigure(name, updates)
+        save_config(config_path, manager.config)
+        return {"ok": True, "config": manager.config["sensors"].get(name)}
+
+    @app.post("/api/devices/{name}/{action}")
+    def device_action(name: str, action: str):
+        if action == "restart":
+            manager.restart(name)
+        elif action == "connect":
+            manager.connect(name)
+        elif action == "disconnect":
+            manager.disconnect(name)
+        else:
+            return JSONResponse({"error": f"unknown action '{action}'"}, status_code=400)
+        return {"ok": True}
+
+    class BtScan(BaseModel):
+        seconds: int = 8
+
+    @app.post("/api/bluetooth/scan")
+    def bt_scan(body: BtScan):
+        return {"devices": bluetooth.scan(seconds=body.seconds)}
+
+    class BtPair(BaseModel):
+        mac: str
+        pin: str = "1234"
+
+    @app.post("/api/bluetooth/pair")
+    def bt_pair(body: BtPair):
+        return bluetooth.pair(body.mac, body.pin)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

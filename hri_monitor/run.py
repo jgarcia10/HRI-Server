@@ -28,7 +28,7 @@ def main():
     bus = MessageBus()
     manager = SensorManager(bus, config)
     manager.start_all()
-    app = create_app(bus, manager, ui_dir=ROOT / "ui_dist")
+    app = create_app(bus, manager, ui_dir=ROOT / "ui_dist", config_path=ROOT / "config.yaml")
 
     host, port = config["server"]["host"], config["server"]["port"]
     browser_timer = None

@@ -5,6 +5,8 @@ from hub.server import create_app
 
 
 class FakeManager:
+    config = {"sensors": {}}
+
     def statuses(self):
         return {"shimmer": "connected"}
 
@@ -48,3 +50,50 @@ def test_static_ui_served_when_dir_exists(tmp_path):
     response = client.get("/")
     assert response.status_code == 200
     assert "hri" in response.text
+
+
+def test_devices_endpoint_lists_config_and_options(monkeypatch):
+    import hub.server as srv
+    monkeypatch.setattr(srv.cameras, "list_cameras", lambda: [{"index": 0, "path": "/dev/video0", "name": "Cam"}])
+
+    class M:
+        config = {"sensors": {"rgb": {"simulate": True, "index": 0, "width": 640, "height": 480, "fps": 30}}}
+        def statuses(self): return {"rgb": "connected"}
+    from hub.bus import MessageBus
+    from fastapi.testclient import TestClient
+    client = TestClient(srv.create_app(MessageBus(), M()))
+    r = client.get("/api/devices")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["devices"]["rgb"]["status"] == "connected"
+    assert body["devices"]["rgb"]["config"]["index"] == 0
+    assert body["options"]["cameras"][0]["name"] == "Cam"
+
+
+def test_device_config_post_persists_and_reconfigures(tmp_path, monkeypatch):
+    import hub.server as srv
+    calls = {}
+
+    class M:
+        config = {"sensors": {"rgb": {"simulate": True, "index": 0, "width": 640, "height": 480, "fps": 30}}}
+        def statuses(self): return {"rgb": "connected"}
+        def reconfigure(self, name, updates): calls["reconf"] = (name, updates)
+    saved = {}
+    monkeypatch.setattr(srv, "save_config", lambda p, c: saved.setdefault("c", c))
+    from hub.bus import MessageBus
+    from fastapi.testclient import TestClient
+    client = TestClient(srv.create_app(MessageBus(), M(), config_path=tmp_path / "config.yaml"))
+    r = client.post("/api/devices/rgb/config", json={"index": 7, "simulate": False})
+    assert r.status_code == 200
+    assert calls["reconf"][0] == "rgb" and calls["reconf"][1]["index"] == 7
+    assert "c" in saved
+
+
+def test_bluetooth_scan_endpoint(monkeypatch):
+    import hub.server as srv
+    monkeypatch.setattr(srv.bluetooth, "scan", lambda seconds=8: [{"mac": "AA", "name": "Shimmer3", "paired": False}])
+    from hub.bus import MessageBus
+    from fastapi.testclient import TestClient
+    client = TestClient(srv.create_app(MessageBus(), FakeManager()))
+    r = client.post("/api/bluetooth/scan", json={"seconds": 2})
+    assert r.status_code == 200 and r.json()["devices"][0]["name"] == "Shimmer3"
