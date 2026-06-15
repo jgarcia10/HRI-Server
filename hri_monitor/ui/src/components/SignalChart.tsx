@@ -1,7 +1,7 @@
 import type React from "react";
 import type { LucideIcon } from "lucide-react";
 import { useId } from "react";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 import type { Point } from "../lib/ws";
 
 export function SignalChart({
@@ -17,6 +17,19 @@ export function SignalChart({
 }) {
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
   const color = `var(${colorVar})`;
+
+  function GlassTooltip({ active, payload }: { active?: boolean; payload?: Array<{ value: number }> }) {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="glass" style={{ padding: "4px 10px", borderRadius: "0.6rem" }}>
+        <span className="tnum text-sm font-semibold" style={{ color: "var(--text)" }}>
+          {payload[0].value.toFixed(2)}{" "}
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{unit}</span>
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="glass p-4">
       <div className="mb-2 flex items-baseline justify-between">
@@ -49,6 +62,11 @@ export function SignalChart({
               strokeWidth={2}
               fill={`url(#${id})`}
               dot={false}
+              isAnimationActive={false}
+            />
+            <Tooltip
+              content={<GlassTooltip />}
+              cursor={{ stroke: color, strokeWidth: 1, strokeOpacity: 0.4 }}
               isAnimationActive={false}
             />
           </AreaChart>
