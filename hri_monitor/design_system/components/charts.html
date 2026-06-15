@@ -1,0 +1,49 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Charts — HRI Monitor DS</title>
+<style>
+  :root { --sky:#0284c7; --teal:#0d9488; --ok:#059669; --warn:#d97706; --err:#e11d48; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Geist Variable",system-ui,sans-serif; padding:20px; background:#fbfdff; color:#0c1a28; }
+  h1 { font-size:15px; margin:0 0 12px; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .tile { border-radius:14px; padding:16px; flex:1; min-width:260px; position:relative; overflow:hidden; }
+  .tile.light { background:linear-gradient(135deg,#fbfdff,#eef6fb); border:1px solid #e3edf6; }
+  .tile.dark  { background:#0b1220; color:#eaf3fb; }
+  .dots-l { background-image:radial-gradient(rgba(14,165,233,.14) 1px,transparent 1px); background-size:14px 14px; }
+  .dots-d { background-image:radial-gradient(rgba(125,170,220,.12) 1px,transparent 1px); background-size:14px 14px; }
+  .glass-l { background:rgba(255,255,255,.65); backdrop-filter:blur(8px) saturate(160%); -webkit-backdrop-filter:blur(8px) saturate(160%); border:1px solid rgba(186,210,235,.8); border-radius:16px; box-shadow:0 6px 20px rgba(14,60,110,.08), inset 0 1px 0 rgba(255,255,255,.95); padding:14px; }
+  .glass-d { background:rgba(148,184,220,.08); backdrop-filter:blur(8px) saturate(160%); -webkit-backdrop-filter:blur(8px) saturate(160%); border:1px solid rgba(148,184,220,.18); border-radius:16px; box-shadow:0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(200,225,255,.15); padding:14px; }
+  .muted-l { color:#5b7186; } .muted-d { color:#7e93ad; }
+  .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+</style>
+</head>
+<body>
+<h1>Chart style — monotone area, vertical gradient fill, glow stroke (dark), dashed horizontal grid</h1>
+<div class="row">
+  <div class="tile light dots-l" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="glass-l"><div class="lbl muted-l">GSR</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0284c7" stop-opacity=".3"/><stop offset="1" stop-color="#0284c7" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c1)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#0284c7" stroke-width="2" fill="none"/></svg></div>
+    <div class="glass-l"><div class="lbl muted-l">PPG</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e11d48" stop-opacity=".3"/><stop offset="1" stop-color="#e11d48" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c2)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#e11d48" stroke-width="2" fill="none"/></svg></div>
+    <div class="glass-l"><div class="lbl muted-l">Blink</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7c3aed" stop-opacity=".3"/><stop offset="1" stop-color="#7c3aed" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c3)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#7c3aed" stroke-width="2" fill="none"/></svg></div>
+    <div class="glass-l"><div class="lbl muted-l">Temp</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d97706" stop-opacity=".3"/><stop offset="1" stop-color="#d97706" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c4)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#d97706" stroke-width="2" fill="none"/></svg></div>
+  </div>
+  <div class="tile dark dots-d" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="glass-d"><div class="lbl muted-d">GSR</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#38bdf8" stop-opacity=".3"/><stop offset="1" stop-color="#38bdf8" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c5)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#38bdf8" stroke-width="2" fill="none" style="filter:drop-shadow(0 0 3px rgba(56,189,248,.7))"/></svg></div>
+    <div class="glass-d"><div class="lbl muted-d">PPG</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c6" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fb7185" stop-opacity=".3"/><stop offset="1" stop-color="#fb7185" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c6)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#fb7185" stroke-width="2" fill="none"/></svg></div>
+    <div class="glass-d"><div class="lbl muted-d">Blink</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c7" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a78bfa" stop-opacity=".3"/><stop offset="1" stop-color="#a78bfa" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c7)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#a78bfa" stroke-width="2" fill="none" style="filter:drop-shadow(0 0 3px rgba(167,139,250,.7))"/></svg></div>
+    <div class="glass-d"><div class="lbl muted-d">Temp</div>
+<svg width="100%" height="36" viewBox="0 0 100 30" preserveAspectRatio="none"><defs><linearGradient id="c8" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbbf24" stop-opacity=".3"/><stop offset="1" stop-color="#fbbf24" stop-opacity="0"/></linearGradient></defs><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10 L100 30 0 30Z" fill="url(#c8)"/><path d="M0 22 C12 20 18 10 30 12 S52 26 64 18 86 6 100 10" stroke="#fbbf24" stroke-width="2" fill="none" style="filter:drop-shadow(0 0 3px rgba(251,191,36,.7))"/></svg></div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,50 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Colors — HRI Monitor DS</title>
+<style>
+  :root { --sky:#0284c7; --teal:#0d9488; --ok:#059669; --warn:#d97706; --err:#e11d48; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Geist Variable",system-ui,sans-serif; padding:20px; background:#fbfdff; color:#0c1a28; }
+  h1 { font-size:15px; margin:0 0 12px; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .tile { border-radius:14px; padding:16px; flex:1; min-width:260px; position:relative; overflow:hidden; }
+  .tile.light { background:linear-gradient(135deg,#fbfdff,#eef6fb); border:1px solid #e3edf6; }
+  .tile.dark  { background:#0b1220; color:#eaf3fb; }
+  .dots-l { background-image:radial-gradient(rgba(14,165,233,.14) 1px,transparent 1px); background-size:14px 14px; }
+  .dots-d { background-image:radial-gradient(rgba(125,170,220,.12) 1px,transparent 1px); background-size:14px 14px; }
+  .glass-l { background:rgba(255,255,255,.65); backdrop-filter:blur(8px) saturate(160%); -webkit-backdrop-filter:blur(8px) saturate(160%); border:1px solid rgba(186,210,235,.8); border-radius:16px; box-shadow:0 6px 20px rgba(14,60,110,.08), inset 0 1px 0 rgba(255,255,255,.95); padding:14px; }
+  .glass-d { background:rgba(148,184,220,.08); backdrop-filter:blur(8px) saturate(160%); -webkit-backdrop-filter:blur(8px) saturate(160%); border:1px solid rgba(148,184,220,.18); border-radius:16px; box-shadow:0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(200,225,255,.15); padding:14px; }
+  .muted-l { color:#5b7186; } .muted-d { color:#7e93ad; }
+  .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+  .sw { width:120px; border-radius:10px; overflow:hidden; border:1px solid rgba(127,127,127,.2); font-size:10px; }
+  .sw b { display:block; height:44px; }
+  .sw span { display:block; padding:4px 6px; }
+</style>
+</head>
+<body>
+<h1>Color tokens — light / dark</h1>
+<div class="row" style="margin-bottom:14px">
+  <div class="sw"><b style="background:#fbfdff"></b><span>base #fbfdff</span></div>
+  <div class="sw"><b style="background:#0284c7"></b><span>accent/GSR #0284c7</span></div>
+  <div class="sw"><b style="background:#0d9488"></b><span>accent-2 #0d9488</span></div>
+  <div class="sw"><b style="background:#e11d48"></b><span>PPG/err #e11d48</span></div>
+  <div class="sw"><b style="background:#7c3aed"></b><span>blink #7c3aed</span></div>
+  <div class="sw"><b style="background:#d97706"></b><span>temp/warn #d97706</span></div>
+  <div class="sw"><b style="background:#059669"></b><span>ok #059669</span></div>
+  <div class="sw"><b style="background:#0c1a28"></b><span>text #0c1a28</span></div>
+</div>
+<div class="row" style="background:#0b1220;border-radius:14px;padding:14px">
+  <div class="sw"><b style="background:#0b1220;border-bottom:1px solid #233"></b><span style="color:#eaf3fb">base #0b1220</span></div>
+  <div class="sw"><b style="background:#38bdf8"></b><span style="color:#eaf3fb">accent/GSR #38bdf8</span></div>
+  <div class="sw"><b style="background:#2dd4bf"></b><span style="color:#eaf3fb">accent-2 #2dd4bf</span></div>
+  <div class="sw"><b style="background:#fb7185"></b><span style="color:#eaf3fb">PPG/err #fb7185</span></div>
+  <div class="sw"><b style="background:#a78bfa"></b><span style="color:#eaf3fb">blink #a78bfa</span></div>
+  <div class="sw"><b style="background:#fbbf24"></b><span style="color:#eaf3fb">temp/warn #fbbf24</span></div>
+  <div class="sw"><b style="background:#34d399"></b><span style="color:#eaf3fb">ok #34d399</span></div>
+  <div class="sw"><b style="background:#eaf3fb"></b><span style="color:#eaf3fb">text #eaf3fb</span></div>
+</div>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sidebar — HRI Monitor DS</title>
+<style>
+  :root { --sky:#0284c7; --teal:#0d9488; --ok:#059669; --warn:#d97706; --err:#e11d48; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Geist Variable",system-ui,sans-serif; padding:20px; background:#fbfdff; color:#0c1a28; }
+  h1 { font-size:15px; margin:0 0 12px; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .tile { border-radius:14px; padding:16px; flex:1; min-width:260px; position:relative; overflow:hidden; }
+  .tile.light { background:linear-gradient(135deg,#fbfdff,#eef6fb); border:1px solid #e3edf6; }
+  .tile.dark  { background:#0b1220; color:#eaf3fb; }
+  .dots-l { background-image:radial-gradient(rgba(14,165,233,.14) 1px,transparent 1px); background-size:14px 14px; }
+  .dots-d { background-image:radial-gradient(rgba(125,170,220,.12) 1px,transparent 1px); background-size:14px 14px; }
+  .glass-l { background:rgba(255,255,255,.65); backdrop-filter:blur(8px) saturate(160%); -webkit-backdrop-filter:blur(8px) saturate(160%); border:1px solid rgba(186,210,235,.8); border-radius:16px; box-shadow:0 6px 20px rgba(14,60,110,.08), inset 0 1px 0 rgba(255,255,255,.95); padding:14px; }
+  .glass-d { background:rgba(148,184,220,.08); backdrop-filter:blur(8px) saturate(160%); -webkit-backdrop-filter:blur(8px) saturate(160%); border:1px solid rgba(148,184,220,.18); border-radius:16px; box-shadow:0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(200,225,255,.15); padding:14px; }
+  .muted-l { color:#5b7186; } .muted-d { color:#7e93ad; }
+  .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+  .nav{font-size:12px;border-radius:10px;padding:7px 10px;display:flex;gap:8px;align-items:center}
+</style>
+</head>
+<body>
+<h1>Sidebar — frosted nav with logo, active accent tint, theme toggle</h1>
+<svg width="0" height="0"><defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#0ea5e9"/><stop offset="1" stop-color="#14b8a6"/></linearGradient></defs></svg>
+<div class="row">
+  <div class="tile light dots-l"><div class="glass-l" style="width:190px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9L12 3z" stroke="url(#g)" stroke-width="2" stroke-linejoin="round"/><path d="M7.5 12.5h2.5l2-3 2 5 1.5-2h1" stroke="url(#g)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><b style="font-size:13px">HRI Monitor</b><div class="lbl muted-l">clinical frost</div></div>
+    </div>
+    <div class="nav" style="color:#0284c7;background:rgba(2,132,199,.12)">▸ Live</div>
+    <div class="nav muted-l">▸ Devices</div>
+    <div class="nav muted-l">▸ Experiments</div>
+    <div class="nav muted-l" style="margin-top:14px">◐ Theme: system</div>
+  </div></div>
+  <div class="tile dark dots-d"><div class="glass-d" style="width:190px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9L12 3z" stroke="url(#g)" stroke-width="2" stroke-linejoin="round"/><path d="M7.5 12.5h2.5l2-3 2 5 1.5-2h1" stroke="url(#g)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><b style="font-size:13px">HRI Monitor</b><div class="lbl muted-d">clinical frost</div></div>
+    </div>
+    <div class="nav" style="color:#38bdf8;background:rgba(56,189,248,.12)">▸ Live</div>
+    <div class="nav muted-d">▸ Devices</div>
+    <div class="nav muted-d">▸ Experiments</div>
+    <div class="nav muted-d" style="margin-top:14px">◐ Theme: system</div>
+  </div></div>
+</div>
+</body>
+</html>
