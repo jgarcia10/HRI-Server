@@ -107,3 +107,26 @@ def test_cannot_delete_active_recording(tmp_path):
     assert client.delete(f"/api/sessions/{sess}").status_code == 409
     client.post(f"/api/recordings/{rec}/stop")
     assert client.delete(f"/api/recordings/{rec}").status_code == 200   # now allowed
+
+
+def test_recording_summary_endpoint(tmp_path):
+    db, ctrl, client = make_client(tmp_path)
+    exp = client.post("/api/experiments", json={"name": "S"}).json()["id"]
+    client.put(f"/api/experiments/{exp}/conditions", json={"conditions": ["Baseline"]})
+    cond = client.get(f"/api/experiments/{exp}").json()["conditions"][0]["id"]
+    part = client.post(f"/api/experiments/{exp}/participants", json={"code": "P01"}).json()["id"]
+    rec = client.post("/api/recordings/start",
+                      json={"experiment_id": exp, "participant_id": part, "condition_id": cond}).json()["recording_id"]
+    # inject some samples directly into the recording's CSV, then stop
+    import pathlib
+    csv = pathlib.Path(db.get_recording(rec)["csv_path"])
+    csv.write_text("t_offset,signal,value\n0,shimmer.gsr,2.0\n1,shimmer.gsr,4.0\n")
+    client.post(f"/api/recordings/{rec}/stop")
+    s = client.get(f"/api/recordings/{rec}/summary").json()
+    assert s["shimmer.gsr"]["count"] == 2
+    assert s["shimmer.gsr"]["mean"] == 3.0
+
+
+def test_summary_404_for_missing_recording(tmp_path):
+    _, _, client = make_client(tmp_path)
+    assert client.get("/api/recordings/9999/summary").status_code == 404

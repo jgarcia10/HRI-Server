@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from .export import session_zip_bytes
+from .stats import summarize_csv
 
 
 class ExperimentIn(BaseModel):
@@ -139,6 +140,13 @@ def build_router(db, controller) -> APIRouter:
             return JSONResponse({"error": "stop the active recording in this session first"}, status_code=409)
         db.delete_session(session_id)
         return {"ok": True}
+
+    @r.get("/api/recordings/{rec_id}/summary")
+    def recording_summary(rec_id: int):
+        rec = db.get_recording(rec_id)
+        if not rec:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return summarize_csv(rec["csv_path"]) if rec["csv_path"] else {}
 
     @r.get("/api/recordings/{rec_id}/export.csv")
     def export_csv(rec_id: int):

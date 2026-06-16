@@ -15,6 +15,8 @@ export type Recording = {
 export type Session = {
   id: number; participant_id: number; started_at: number; recordings: Recording[];
 };
+export type SignalStats = { count: number; mean: number; min: number; max: number; std: number };
+export type SignalSummary = Record<string, SignalStats>;
 export type ActiveStatus = {
   recording_id: number; session_id: number; condition: string;
   elapsed: number; sample_count: number; markers: Marker[];
@@ -47,6 +49,7 @@ export const api = {
   listSessions: (id: number) => j<Session[]>(`/api/experiments/${id}/sessions`),
   deleteSession: (sid: number) => fetch(`/api/sessions/${sid}`, { method: "DELETE" }),
   deleteRecording: (rid: number) => fetch(`/api/recordings/${rid}`, { method: "DELETE" }),
+  recordingSummary: (rid: number) => j<SignalSummary>(`/api/recordings/${rid}/summary`),
   start: (body: { condition_id: number; experiment_id?: number; participant_id?: number; session_id?: number }) =>
     post("/api/recordings/start", body),
   marker: (recId: number, label: string, source: string) =>
