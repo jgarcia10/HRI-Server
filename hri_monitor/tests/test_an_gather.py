@@ -72,3 +72,14 @@ def test_complete_case_filtering_and_unpaired(tmp_path):
     g = gather(FakeDB(rows), 1, [1, 2], "shimmer.gsr", "mean", "participant")
     assert g["paired"] is False
     assert g["counts"][1] == 2 and g["counts"][2] == 1
+
+
+def test_missing_csv_path_is_skipped(tmp_path):
+    # one valid recording + one pointing at a nonexistent file → the bad one is skipped, no raise
+    good = make_csv(tmp_path, "good", "shimmer.gsr", [2, 4])
+    rows = [
+        {"participant_id": 1, "condition_id": 1, "csv_path": good},
+        {"participant_id": 2, "condition_id": 1, "csv_path": str(tmp_path / "does_not_exist.csv")},
+    ]
+    g = gather(FakeDB(rows), 1, [1], "shimmer.gsr", "mean", "recording")
+    assert g["counts"][1] == 1  # only the readable recording contributed

@@ -17,7 +17,10 @@ def gather(db, experiment_id, condition_ids, signal, feature, unit):
     per = defaultdict(lambda: defaultdict(list))
     recording_rows = []  # for the per-recording unit
     for r in recs:
-        f = extract_features(r["csv_path"], signal)
+        try:
+            f = extract_features(r["csv_path"], signal)
+        except OSError:
+            continue  # stale/missing/unreadable csv_path → skip this recording
         if f is None or feature not in f:
             continue
         v = f[feature]
@@ -82,6 +85,7 @@ def run_test(g, condition_ids, cond_names):
     counts = g["counts"]
     if any(counts.get(cid, 0) < _MIN_PER_CONDITION for cid in condition_ids):
         return {"ok": False, "reason": "insufficient data (need >=3 per condition)",
+                "values": [],
                 "descriptives": [{"condition": cond_names.get(cid, str(cid)), "n": counts.get(cid, 0)}
                                  for cid in condition_ids]}
     df = pd.DataFrame(rows).rename(columns={"condition_id": "condition"})

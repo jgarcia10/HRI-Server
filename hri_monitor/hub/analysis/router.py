@@ -80,6 +80,7 @@ def build_analysis_router(db) -> APIRouter:
                                        body.signal, feat, body.unit, names))
             except Exception as e:  # noqa: BLE001
                 results.append({"ok": False, "feature": feat, "signal": body.signal,
+                                "unit": body.unit, "values": [],
                                 "reason": f"could not compute: {e}"})
         return JSONResponse(_json_safe({"results": results}))
 
