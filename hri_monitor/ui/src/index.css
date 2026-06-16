@@ -104,3 +104,16 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .chart-glow .recharts-area-curve { filter: none; }
 }
+
+.chip-dl {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: transparent;
+}
+.chip-dl:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
