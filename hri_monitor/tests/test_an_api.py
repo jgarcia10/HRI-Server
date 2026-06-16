@@ -55,3 +55,26 @@ def test_plot_endpoint_svg(tmp_path):
         "experiment_id": exp, "condition_ids": conds, "signal": "shimmer.gsr",
         "feature": "mean", "unit": "participant", "format": "svg"})
     assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg")
+
+
+def test_export_csv_has_rows(tmp_path):
+    db, exp, conds, client = setup(tmp_path)
+    for code, base in [("P1", 0), ("P2", 1), ("P3", 2)]:
+        pid = _rec(db, tmp_path, exp, code, conds[0], "shimmer.gsr", [2 + base, 3 + base, 4 + base], f"{code}a")
+        _rec(db, tmp_path, exp, pid, conds[1], "shimmer.gsr", [5 + base, 6 + base, 7 + base], f"{code}b")
+    r = client.post("/api/analysis/export.csv", json={
+        "experiment_id": exp, "condition_ids": conds, "signal": "shimmer.gsr",
+        "features": ["mean"], "unit": "participant"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/csv")
+    lines = [ln for ln in r.text.splitlines() if ln.strip()]
+    assert lines[0] == "signal,feature,condition,subject,value"
+    assert len(lines) > 1  # header + at least one value row
+
+
+def test_plot_rejects_bad_format(tmp_path):
+    db, exp, conds, client = setup(tmp_path)
+    r = client.get("/api/analysis/plot", params={
+        "experiment_id": exp, "condition_ids": conds, "signal": "shimmer.gsr",
+        "feature": "mean", "unit": "participant", "format": "png"})
+    assert r.status_code == 400

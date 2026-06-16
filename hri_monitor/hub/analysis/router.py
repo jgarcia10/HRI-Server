@@ -86,6 +86,8 @@ def build_analysis_router(db) -> APIRouter:
     @r.get("/api/analysis/plot")
     def plot(experiment_id: int, signal: str, feature: str, format: str = "svg",
              unit: str = "participant", condition_ids: list[int] = Query(default=[])):
+        if format not in ("svg", "pdf"):
+            return JSONResponse({"error": "format must be svg or pdf"}, status_code=400)
         names = _cond_names(db, experiment_id)
         res = compare(db, experiment_id, condition_ids, signal, feature, unit, names)
         order = [names.get(cid, str(cid)) for cid in condition_ids]
