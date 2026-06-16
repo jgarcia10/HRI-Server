@@ -55,7 +55,7 @@ export const analysisApi = {
     j<{ results: AnalysisResult[] }>("/api/analysis/compare", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req),
     }),
-  // download URLs (used as <a href> so the browser saves the file)
+  // plot download URL (used as <a href> so the browser saves the file)
   plotUrl: (req: Omit<CompareReq, "features">, feature: string, format: "svg" | "pdf") => {
     const p = new URLSearchParams();
     p.set("experiment_id", String(req.experiment_id));
@@ -64,7 +64,6 @@ export const analysisApi = {
     p.set("unit", req.unit); p.set("format", format);
     return `/api/analysis/plot?${p.toString()}`;
   },
-  valuesCsvUrl: "/api/analysis/export.csv",
 };
 
 export function useAnalysisOptions(expId: number | null) {
