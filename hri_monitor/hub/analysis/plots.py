@@ -34,6 +34,8 @@ def figure_bytes(values, condition_order, title, ylabel, fmt) -> bytes:
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     fig.tight_layout()
     buf = io.BytesIO()
-    fig.savefig(buf, format=fmt)
-    plt.close(fig)
+    try:
+        fig.savefig(buf, format=fmt)
+    finally:
+        plt.close(fig)
     return buf.getvalue()
