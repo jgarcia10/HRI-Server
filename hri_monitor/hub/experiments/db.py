@@ -188,6 +188,18 @@ class Database:
                 out.append(d)
             return out
 
+    def recordings_for_conditions(self, experiment_id, condition_ids):
+        """All recordings of the given conditions in the experiment, with participant."""
+        if not condition_ids:
+            return []
+        qs = ",".join("?" * len(condition_ids))
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                f"SELECT r.id, r.condition_id, r.csv_path, s.participant_id "
+                f"FROM recording r JOIN session s ON r.session_id = s.id "
+                f"WHERE s.experiment_id=? AND r.condition_id IN ({qs})",
+                (experiment_id, *condition_ids))]
+
     def get_recording(self, rec_id):
         with self._conn() as c:
             row = c.execute("SELECT * FROM recording WHERE id=?", (rec_id,)).fetchone()
