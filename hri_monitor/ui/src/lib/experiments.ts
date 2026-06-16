@@ -49,7 +49,19 @@ export const api = {
   listSessions: (id: number) => j<Session[]>(`/api/experiments/${id}/sessions`),
   deleteSession: (sid: number) => fetch(`/api/sessions/${sid}`, { method: "DELETE" }),
   deleteRecording: (rid: number) => fetch(`/api/recordings/${rid}`, { method: "DELETE" }),
-  recordingSummary: (rid: number) => j<SignalSummary>(`/api/recordings/${rid}/summary`),
+  recordingSummary: async (rid: number): Promise<SignalSummary> => {
+    try {
+      const r = await fetch(`/api/recordings/${rid}/summary`);
+      if (!r.ok) return {};                         // 404 / old backend → no stats
+      const data = await r.json();
+      // only keep well-formed per-signal stat objects (guards against error bodies)
+      return Object.fromEntries(
+        Object.entries(data).filter(([, v]) => v && typeof (v as SignalStats).mean === "number"),
+      ) as SignalSummary;
+    } catch {
+      return {};
+    }
+  },
   start: (body: { condition_id: number; experiment_id?: number; participant_id?: number; session_id?: number }) =>
     post("/api/recordings/start", body),
   marker: (recId: number, label: string, source: string) =>
