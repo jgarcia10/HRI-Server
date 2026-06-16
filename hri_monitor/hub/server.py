@@ -31,6 +31,8 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         from .experiments.router import build_router
         app.include_router(build_router(experiments["db"], experiments["controller"]))
         app.state.recording_controller = experiments["controller"]
+        from .analysis.router import build_analysis_router
+        app.include_router(build_analysis_router(experiments["db"]))
 
     @app.get("/api/status")
     def status():
