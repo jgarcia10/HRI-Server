@@ -56,3 +56,18 @@ def test_recording_lifecycle_and_export(tmp_path):
     dup = client.post("/api/recordings/start", json={"experiment_id": exp, "participant_id": part, "condition_id": cond})
     assert dup.status_code == 409
     client.post(f"/api/recordings/{client.get('/api/recordings/active').json()['recording_id']}/stop")
+
+
+def test_active_status_shape(tmp_path):
+    db, ctrl, client = make_client(tmp_path)
+    exp = client.post("/api/experiments", json={"name": "S"}).json()["id"]
+    client.put(f"/api/experiments/{exp}/conditions", json={"conditions": ["Baseline"]})
+    cond = client.get(f"/api/experiments/{exp}").json()["conditions"][0]["id"]
+    part = client.post(f"/api/experiments/{exp}/participants", json={"code": "P01"}).json()["id"]
+    rec = client.post("/api/recordings/start",
+                      json={"experiment_id": exp, "participant_id": part, "condition_id": cond}).json()["recording_id"]
+    st = client.get("/api/recordings/active").json()
+    assert st["recording_id"] == rec
+    assert st["condition"] == "Baseline"
+    assert "elapsed" in st and "sample_count" in st and "markers" in st
+    client.post(f"/api/recordings/{rec}/stop")
