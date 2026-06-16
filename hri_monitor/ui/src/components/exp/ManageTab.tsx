@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type Experiment, type Participant } from "../../lib/experiments";
 import { Field } from "../DeviceCard";
 
@@ -18,6 +18,11 @@ export function ManageTab({
   const [condText, setCondText] = useState("");
   const [labelText, setLabelText] = useState("");
   const [pcode, setPcode] = useState("");
+
+  useEffect(() => {
+    setCondText(exp ? exp.conditions.map((c) => c.name).join(", ") : "");
+    setLabelText(exp ? exp.marker_labels.map((l) => l.label).join(", ") : "");
+  }, [exp?.id]);
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -38,7 +43,7 @@ export function ManageTab({
           <input className="flex-1 rounded-lg border px-2 py-1 text-xs" value={newExp}
             onChange={(e) => setNewExp(e.target.value)} placeholder="New experiment name"
             style={{ borderColor: "var(--glass-border)", background: "var(--glass-bg)", color: "var(--text)" }} />
-          <button onClick={async () => { if (newExp.trim()) { const r: any = await api.createExperiment(newExp.trim()); setNewExp(""); refreshList(); onSelect(r.id); } }}
+          <button onClick={async () => { if (newExp.trim()) { const r = await api.createExperiment(newExp.trim()); setNewExp(""); refreshList(); onSelect(r.id); } }}
             className="rounded-lg px-3 text-xs font-semibold" style={{ background: "var(--accent)", color: "#fff" }}>
             <Plus size={14} />
           </button>
@@ -51,22 +56,22 @@ export function ManageTab({
           <Field label="Conditions">
             <div className="flex gap-2">
               <input className="flex-1 rounded-lg border px-2 py-1 text-xs"
-                defaultValue={exp.conditions.map((c) => c.name).join(", ")}
-                onBlur={(e) => setCondText(e.target.value)}
+                value={condText}
+                onChange={(e) => setCondText(e.target.value)}
                 placeholder="Comma-separated, in order"
                 style={{ borderColor: "var(--glass-border)", background: "var(--glass-bg)", color: "var(--text)" }} />
-              <button onClick={async () => { await api.setConditions(exp.id, (condText || exp.conditions.map(c=>c.name).join(",")).split(",").map(s => s.trim()).filter(Boolean)); refresh(); }}
+              <button onClick={async () => { await api.setConditions(exp.id, condText.split(",").map(s => s.trim()).filter(Boolean)); refresh(); }}
                 className="rounded-lg px-3 text-xs font-semibold" style={{ color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 12%, transparent)" }}>Save</button>
             </div>
           </Field>
           <Field label="Marker labels">
             <div className="flex gap-2">
               <input className="flex-1 rounded-lg border px-2 py-1 text-xs"
-                defaultValue={exp.marker_labels.map((l) => l.label).join(", ")}
-                onBlur={(e) => setLabelText(e.target.value)}
+                value={labelText}
+                onChange={(e) => setLabelText(e.target.value)}
                 placeholder="Comma-separated quick-buttons"
                 style={{ borderColor: "var(--glass-border)", background: "var(--glass-bg)", color: "var(--text)" }} />
-              <button onClick={async () => { await api.setMarkerLabels(exp.id, (labelText || exp.marker_labels.map(l=>l.label).join(",")).split(",").map(s => s.trim()).filter(Boolean)); refresh(); }}
+              <button onClick={async () => { await api.setMarkerLabels(exp.id, labelText.split(",").map(s => s.trim()).filter(Boolean)); refresh(); }}
                 className="rounded-lg px-3 text-xs font-semibold" style={{ color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 12%, transparent)" }}>Save</button>
             </div>
           </Field>
