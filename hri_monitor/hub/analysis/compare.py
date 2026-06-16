@@ -38,7 +38,7 @@ def gather(db, experiment_id, condition_ids, signal, feature, unit):
         sets.append(set(subjects))
         for pid, vals in subjects.items():
             rows.append({"subject": pid, "condition_id": cid, "value": sum(vals) / len(vals)})
-    paired = len(sets) >= 2 and all(s == sets[0] and len(s) > 0 for s in sets)
+    paired = len(sets) >= 2 and len(sets[0]) > 0 and all(s == sets[0] for s in sets)
     if paired:
         common = set.intersection(*sets)
         rows = [r for r in rows if r["subject"] in common]

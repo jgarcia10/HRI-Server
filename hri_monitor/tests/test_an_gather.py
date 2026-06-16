@@ -46,3 +46,29 @@ def test_per_recording_unit_keeps_each_recording(tmp_path):
     ]
     g = gather(FakeDB(rows), 1, [1], "shimmer.gsr", "mean", "recording")
     assert g["counts"][1] == 2 and g["paired"] is False
+
+
+def test_per_participant_averages_multiple_recordings(tmp_path):
+    # P1 has TWO recordings in cond 1 → the row value must be their mean
+    rows = [
+        {"participant_id": 1, "condition_id": 1, "csv_path": make_csv(tmp_path, "a", "shimmer.gsr", [2])},   # mean 2
+        {"participant_id": 1, "condition_id": 1, "csv_path": make_csv(tmp_path, "b", "shimmer.gsr", [6])},   # mean 6
+    ]
+    g = gather(FakeDB(rows), 1, [1], "shimmer.gsr", "mean", "participant")
+    # one aggregated row for P1 in cond1, value = mean(2, 6) = 4.0
+    assert len(g["rows"]) == 1
+    assert g["rows"][0]["subject"] == 1 and g["rows"][0]["value"] == 4.0
+    assert g["counts"][1] == 1
+
+
+def test_complete_case_filtering_and_unpaired(tmp_path):
+    # P1,P2 in cond1; only P1 in cond2 → participant sets differ → unpaired,
+    # and cond2 keeps only its present participant.
+    rows = [
+        {"participant_id": 1, "condition_id": 1, "csv_path": make_csv(tmp_path, "a", "shimmer.gsr", [2])},
+        {"participant_id": 2, "condition_id": 1, "csv_path": make_csv(tmp_path, "b", "shimmer.gsr", [3])},
+        {"participant_id": 1, "condition_id": 2, "csv_path": make_csv(tmp_path, "c", "shimmer.gsr", [5])},
+    ]
+    g = gather(FakeDB(rows), 1, [1, 2], "shimmer.gsr", "mean", "participant")
+    assert g["paired"] is False
+    assert g["counts"][1] == 2 and g["counts"][2] == 1
