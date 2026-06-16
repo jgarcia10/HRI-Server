@@ -43,3 +43,15 @@ def test_peaks_per_min_counts_local_maxima(tmp_path):
 def test_absent_signal_returns_none(tmp_path):
     p = write(tmp_path, [(0.0, "shimmer.gsr", 1.0)])
     assert extract_features(p, "ppg.hr") is None
+
+
+def test_slope_zero_for_single_point(tmp_path):
+    p = write(tmp_path, [(0.0, "ppg.hr", 42.0)])
+    f = extract_features(p, "ppg.hr")
+    assert f["slope"] == 0.0
+
+
+def test_peaks_zero_for_flat_signal(tmp_path):
+    p = write(tmp_path, [(i * 0.4, "rgb.blink", 3.0) for i in range(10)])
+    f = extract_features(p, "rgb.blink")
+    assert f["peaks_per_min"] == 0.0
