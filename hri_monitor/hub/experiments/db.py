@@ -1,6 +1,7 @@
 """SQLite metadata store for experiments/participants/sessions/recordings/markers.
 Stdlib sqlite3 only. One Database instance per process; methods are short-lived
 connections so they are safe to call from multiple threads."""
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -85,7 +86,11 @@ class Database:
 
     def delete_experiment(self, exp_id):
         with self._conn() as c:
+            paths = [r["csv_path"] for r in c.execute(
+                "SELECT r.csv_path FROM recording r "
+                "JOIN session s ON r.session_id = s.id WHERE s.experiment_id=?", (exp_id,))]
             c.execute("DELETE FROM experiment WHERE id=?", (exp_id,))
+        self._unlink_csvs(paths)
 
     def set_conditions(self, exp_id, names):
         with self._conn() as c:
@@ -120,7 +125,11 @@ class Database:
 
     def delete_participant(self, pid):
         with self._conn() as c:
+            paths = [r["csv_path"] for r in c.execute(
+                "SELECT r.csv_path FROM recording r "
+                "JOIN session s ON r.session_id = s.id WHERE s.participant_id=?", (pid,))]
             c.execute("DELETE FROM participant WHERE id=?", (pid,))
+        self._unlink_csvs(paths)
 
     # ---- sessions / recordings / markers -----------------------------------
     def create_session(self, exp_id, participant_id, notes=""):
@@ -179,3 +188,12 @@ class Database:
         with self._conn() as c:
             cur = c.execute("UPDATE recording SET status='interrupted' WHERE status='active'")
             return cur.rowcount
+
+    def _unlink_csvs(self, paths):
+        """Best-effort delete of recording CSV files on disk."""
+        for p in paths:
+            if p:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass

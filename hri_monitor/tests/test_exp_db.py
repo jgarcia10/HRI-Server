@@ -66,3 +66,30 @@ def test_active_recordings_reconciled_to_interrupted(db):
     n = db.reconcile_active_recordings()
     assert n == 1
     assert db.get_recording(rec)["status"] == "interrupted"
+
+
+def test_delete_experiment_unlinks_csv_files(db, tmp_path):
+    exp = db.create_experiment("S", "")
+    db.set_conditions(exp, ["Baseline"])
+    cond = db.get_experiment(exp)["conditions"][0]["id"]
+    part = db.create_participant(exp, "P01", "")
+    sess = db.create_session(exp, part)
+    csv = tmp_path / "rec1.csv"
+    csv.write_text("t_offset,signal,value\n0.0,shimmer.gsr,4.2\n")
+    db.create_recording(sess, cond, str(csv))
+    assert csv.exists()
+    db.delete_experiment(exp)
+    assert not csv.exists()   # CSV removed, not orphaned
+
+
+def test_delete_participant_unlinks_csv_files(db, tmp_path):
+    exp = db.create_experiment("S", "")
+    db.set_conditions(exp, ["Baseline"])
+    cond = db.get_experiment(exp)["conditions"][0]["id"]
+    part = db.create_participant(exp, "P01", "")
+    sess = db.create_session(exp, part)
+    csv = tmp_path / "rec2.csv"
+    csv.write_text("t_offset,signal,value\n")
+    db.create_recording(sess, cond, str(csv))
+    db.delete_participant(part)
+    assert not csv.exists()
