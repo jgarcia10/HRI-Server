@@ -58,3 +58,29 @@ def test_malformed_payload_does_not_break_recorder(tmp_path):
     r.stop()
     signals = [row[1] for row in read_rows(p)[1:]]
     assert signals == ["shimmer.gsr"]             # exactly the one good sample
+
+
+def test_stop_during_active_flushing_is_safe(tmp_path):
+    # Hammer publishes from another thread while stopping, to exercise the
+    # timer/stop interleaving. Must not raise and must not lose the header.
+    import threading as _t
+    bus = MessageBus()
+    p = tmp_path / "r.csv"
+    r = Recorder(bus, p, start_ts=0.0, flush_interval=0.01)
+    r.start()
+    stop_flag = {"go": True}
+
+    def spam():
+        while stop_flag["go"]:
+            bus.publish("shimmer.gsr", {"value": 1.0})
+
+    th = _t.Thread(target=spam, daemon=True)
+    th.start()
+    import time as _time
+    _time.sleep(0.05)
+    n = r.stop()           # must not raise
+    stop_flag["go"] = False
+    th.join(timeout=1)
+    rows = read_rows(p)
+    assert rows[0] == ["t_offset", "signal", "value"]
+    assert n == len(rows) - 1   # count matches written rows exactly

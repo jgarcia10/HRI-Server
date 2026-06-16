@@ -57,13 +57,23 @@ class Recorder:
         self._flush()
         self._schedule_flush()
 
-    def _flush(self):
-        with self._lock:
-            rows, self._buf = self._buf, []
-        if rows:
+    def _drain_locked(self):
+        """Write buffered rows to the CSV. Caller MUST hold self._lock."""
+        if self._file is None:
+            return
+        rows, self._buf = self._buf, []
+        if not rows:
+            return
+        try:
             self._writer.writerows(rows)
             self._file.flush()
             self._count += len(rows)
+        except Exception:
+            log.exception("recorder: csv write failed (%d rows lost)", len(rows))
+
+    def _flush(self):
+        with self._lock:
+            self._drain_locked()
 
     def stop(self):
         if self._stopped:
@@ -72,8 +82,9 @@ class Recorder:
         if self._timer:
             self._timer.cancel()
         self.bus.unsubscribe("*", self._on_message)
-        self._flush()
-        if self._file:
-            self._file.close()
-            self._file = None
+        with self._lock:
+            self._drain_locked()
+            if self._file:
+                self._file.close()
+                self._file = None
         return self._count
