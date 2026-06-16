@@ -1,0 +1,56 @@
+"""Per-recording feature extraction from a tidy CSV (read-only). numpy-based."""
+import csv
+
+import numpy as np
+
+FEATURES = ["mean", "sd", "min", "max", "slope", "peaks_per_min"]
+_REFRACTORY_S = 0.3
+
+
+def _read_signal(csv_path, signal):
+    ts, vs = [], []
+    with open(csv_path, newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for row in reader:
+            if len(row) >= 3 and row[1] == signal:
+                try:
+                    ts.append(float(row[0])); vs.append(float(row[2]))
+                except ValueError:
+                    continue
+    return np.array(ts), np.array(vs)
+
+
+def _slope(ts, vs):
+    if len(ts) < 2 or np.ptp(ts) == 0:
+        return 0.0
+    # least-squares slope of vs ~ ts
+    return float(np.polyfit(ts, vs, 1)[0])
+
+
+def _peaks_per_min(ts, vs):
+    if len(vs) < 3 or len(ts) < 2:
+        return 0.0
+    thr = float(np.mean(vs) + 0.5 * np.std(vs))
+    peaks = []
+    last_t = -1e9
+    for i in range(1, len(vs) - 1):
+        if vs[i] > vs[i - 1] and vs[i] >= vs[i + 1] and vs[i] > thr and ts[i] - last_t >= _REFRACTORY_S:
+            peaks.append(ts[i]); last_t = ts[i]
+    duration_min = (ts[-1] - ts[0]) / 60.0
+    return float(len(peaks) / duration_min) if duration_min > 0 else 0.0
+
+
+def extract_features(csv_path, signal) -> dict | None:
+    """Return {mean,sd,min,max,slope,peaks_per_min} for `signal`, or None if absent."""
+    ts, vs = _read_signal(csv_path, signal)
+    if len(vs) == 0:
+        return None
+    return {
+        "mean": float(np.mean(vs)),
+        "sd": float(np.std(vs)),
+        "min": float(np.min(vs)),
+        "max": float(np.max(vs)),
+        "slope": _slope(ts, vs),
+        "peaks_per_min": _peaks_per_min(ts, vs),
+    }

@@ -12,3 +12,4 @@ mediapipe==0.10.14
 # to compile CUDA support on machines that have the CUDA toolkit but no usable GPU.
 dlib-bin>=19.24
 pyserial>=3.5
+pingouin>=0.6
