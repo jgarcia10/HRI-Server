@@ -4,6 +4,7 @@ import {
 import { useState } from "react";
 import { Logo } from "./components/Logo";
 import { useTheme } from "./lib/theme";
+import { Analysis } from "./pages/Analysis";
 import { Devices } from "./pages/Devices";
 import { Experiments } from "./pages/Experiments";
 import { Live } from "./pages/Live";
@@ -67,6 +68,8 @@ export default function App() {
           <Devices />
         ) : page === "Experiments" ? (
           <Experiments />
+        ) : page === "Analysis" ? (
+          <Analysis />
         ) : (
           <div className="glass flex h-40 items-center justify-center text-sm" style={{ color: "var(--text-muted)" }}>
             "{page}" arrives in a later milestone — already dressed in Clinical Frost.
