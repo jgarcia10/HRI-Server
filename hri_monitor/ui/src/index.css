@@ -117,3 +117,14 @@ body {
   background: transparent;
 }
 .chip-dl:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.an-sel {
+  width: 100%;
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 25%, transparent);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.an-sel:disabled { opacity: 0.5; }
