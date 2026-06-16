@@ -22,10 +22,15 @@ WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
 
 
-def create_app(bus, manager, ui_dir=None, config_path="config.yaml") -> FastAPI:
+def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments=None) -> FastAPI:
     app = FastAPI(title="HRI Monitor")
     frames = FrameStore(bus, {"thermal": "thermal.frame", "rgb": "rgb.frame"})
     app.state.frames = frames
+
+    if experiments is not None:
+        from .experiments.router import build_router
+        app.include_router(build_router(experiments["db"], experiments["controller"]))
+        app.state.recording_controller = experiments["controller"]
 
     @app.get("/api/status")
     def status():

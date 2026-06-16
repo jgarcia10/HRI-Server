@@ -28,7 +28,14 @@ def main():
     bus = MessageBus()
     manager = SensorManager(bus, config)
     manager.start_all()
-    app = create_app(bus, manager, ui_dir=ROOT / "ui_dist", config_path=ROOT / "config.yaml")
+    from hub.experiments.controller import RecordingController
+    from hub.experiments.db import Database
+    data_dir = ROOT / config.get("data_dir", "data")
+    exp_db = Database(data_dir / "hri.db")
+    rec_ctrl = RecordingController(bus, exp_db, data_dir / "recordings")
+    experiments = {"db": exp_db, "controller": rec_ctrl}
+    app = create_app(bus, manager, ui_dir=ROOT / "ui_dist",
+                     config_path=ROOT / "config.yaml", experiments=experiments)
 
     host, port = config["server"]["host"], config["server"]["port"]
     browser_timer = None
