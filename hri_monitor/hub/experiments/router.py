@@ -124,6 +124,22 @@ def build_router(db, controller) -> APIRouter:
         rec = db.get_recording(rec_id)
         return rec if rec else JSONResponse({"error": "not found"}, status_code=404)
 
+    @r.delete("/api/recordings/{rec_id}")
+    def delete_recording(rec_id: int):
+        active = controller.status()
+        if active and active["recording_id"] == rec_id:
+            return JSONResponse({"error": "stop the recording before deleting it"}, status_code=409)
+        db.delete_recording(rec_id)
+        return {"ok": True}
+
+    @r.delete("/api/sessions/{session_id}")
+    def delete_session(session_id: int):
+        active = controller.status()
+        if active and active["session_id"] == session_id:
+            return JSONResponse({"error": "stop the active recording in this session first"}, status_code=409)
+        db.delete_session(session_id)
+        return {"ok": True}
+
     @r.get("/api/recordings/{rec_id}/export.csv")
     def export_csv(rec_id: int):
         rec = db.get_recording(rec_id)

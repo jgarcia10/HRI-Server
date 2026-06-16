@@ -144,6 +144,27 @@ class Database:
             return [dict(r) for r in c.execute(
                 "SELECT * FROM session WHERE experiment_id=? ORDER BY started_at DESC", (exp_id,))]
 
+    def get_session(self, session_id):
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM session WHERE id=?", (session_id,)).fetchone()
+            return dict(row) if row else None
+
+    def delete_session(self, session_id):
+        """Delete a whole run: its recordings + markers cascade; remove their CSVs."""
+        with self._conn() as c:
+            paths = [r["csv_path"] for r in c.execute(
+                "SELECT csv_path FROM recording WHERE session_id=?", (session_id,))]
+            c.execute("DELETE FROM session WHERE id=?", (session_id,))
+        self._unlink_csvs(paths)
+
+    def delete_recording(self, rec_id):
+        """Delete one recording (condition run): its markers cascade; remove its CSV."""
+        with self._conn() as c:
+            row = c.execute("SELECT csv_path FROM recording WHERE id=?", (rec_id,)).fetchone()
+            paths = [row["csv_path"]] if row else []
+            c.execute("DELETE FROM recording WHERE id=?", (rec_id,))
+        self._unlink_csvs(paths)
+
     def create_recording(self, session_id, condition_id, csv_path):
         with self._conn() as c:
             cur = c.execute(

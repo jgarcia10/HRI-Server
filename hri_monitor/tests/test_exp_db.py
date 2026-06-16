@@ -93,3 +93,40 @@ def test_delete_participant_unlinks_csv_files(db, tmp_path):
     db.create_recording(sess, cond, str(csv))
     db.delete_participant(part)
     assert not csv.exists()
+
+
+def test_delete_recording_removes_row_and_csv(db, tmp_path):
+    exp = db.create_experiment("S", "")
+    db.set_conditions(exp, ["Baseline"])
+    cond = db.get_experiment(exp)["conditions"][0]["id"]
+    part = db.create_participant(exp, "P01", "")
+    sess = db.create_session(exp, part)
+    csv = tmp_path / "rec.csv"
+    csv.write_text("t_offset,signal,value\n0.0,shimmer.gsr,4.2\n")
+    rec = db.create_recording(sess, cond, str(csv))
+    db.add_marker(rec, 1.0, "x", "button")
+    assert csv.exists()
+    db.delete_recording(rec)
+    assert db.get_recording(rec) is None      # row + markers gone
+    assert not csv.exists()                    # CSV file removed
+    # the session itself survives a single-recording delete
+    assert db.get_session(sess) is not None
+
+
+def test_delete_session_removes_all_recordings_and_csvs(db, tmp_path):
+    exp = db.create_experiment("S", "")
+    db.set_conditions(exp, ["Baseline", "Task"])
+    conds = [c["id"] for c in db.get_experiment(exp)["conditions"]]
+    part = db.create_participant(exp, "P01", "")
+    sess = db.create_session(exp, part)
+    csvs = []
+    for i, cond in enumerate(conds):
+        p = tmp_path / f"r{i}.csv"
+        p.write_text("t_offset,signal,value\n")
+        db.create_recording(sess, cond, str(p))
+        csvs.append(p)
+    assert all(p.exists() for p in csvs)
+    db.delete_session(sess)
+    assert db.get_session(sess) is None
+    assert db.list_recordings(sess) == []
+    assert not any(p.exists() for p in csvs)   # every CSV removed

@@ -43,7 +43,10 @@ export const api = {
   listParticipants: (id: number) => j<Participant[]>(`/api/experiments/${id}/participants`),
   createParticipant: (id: number, code: string, notes = "") =>
     post(`/api/experiments/${id}/participants`, { code, notes }) as Promise<{ id: number }>,
+  deleteParticipant: (pid: number) => fetch(`/api/participants/${pid}`, { method: "DELETE" }),
   listSessions: (id: number) => j<Session[]>(`/api/experiments/${id}/sessions`),
+  deleteSession: (sid: number) => fetch(`/api/sessions/${sid}`, { method: "DELETE" }),
+  deleteRecording: (rid: number) => fetch(`/api/recordings/${rid}`, { method: "DELETE" }),
   start: (body: { condition_id: number; experiment_id?: number; participant_id?: number; session_id?: number }) =>
     post("/api/recordings/start", body),
   marker: (recId: number, label: string, source: string) =>

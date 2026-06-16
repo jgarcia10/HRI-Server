@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type Experiment, type Participant } from "../../lib/experiments";
 import { Field } from "../DeviceCard";
@@ -30,13 +30,23 @@ export function ManageTab({
         <h3 className="mb-2 text-sm font-medium" style={{ color: "var(--text-muted)" }}>Experiments</h3>
         <div className="space-y-1">
           {experiments.map((e) => (
-            <button key={e.id} onClick={() => onSelect(e.id)}
-              className="block w-full rounded-lg px-3 py-2 text-left text-sm"
-              style={selected === e.id
-                ? { color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 12%, transparent)" }
-                : { color: "var(--text)" }}>
-              {e.name}
-            </button>
+            <div key={e.id} className="flex items-center gap-1 rounded-lg"
+              style={selected === e.id ? { background: "color-mix(in srgb, var(--accent) 12%, transparent)" } : undefined}>
+              <button onClick={() => onSelect(e.id)}
+                className="flex-1 px-3 py-2 text-left text-sm"
+                style={{ color: selected === e.id ? "var(--accent)" : "var(--text)" }}>
+                {e.name}
+              </button>
+              <button title="Delete experiment (all participants, sessions, recordings)"
+                onClick={async () => {
+                  if (confirm(`Delete experiment "${e.name}" and ALL its participants, sessions and recordings? This cannot be undone.`)) {
+                    await api.deleteExperiment(e.id);
+                    if (selected === e.id) onSelect(null);
+                    refreshList();
+                  }
+                }}
+                className="px-2 py-2" style={{ color: "var(--err)" }}><Trash2 size={13} /></button>
+            </div>
           ))}
         </div>
         <div className="mt-3 flex gap-2">
@@ -79,8 +89,18 @@ export function ManageTab({
             <h4 className="mb-1 text-xs uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Participants</h4>
             <div className="flex flex-wrap gap-2">
               {participants.map((p) => (
-                <span key={p.id} className="rounded-full px-2.5 py-1 text-xs"
-                  style={{ background: "color-mix(in srgb, var(--accent) 10%, transparent)", color: "var(--accent)" }}>{p.code}</span>
+                <span key={p.id} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs"
+                  style={{ background: "color-mix(in srgb, var(--accent) 10%, transparent)", color: "var(--accent)" }}>
+                  {p.code}
+                  <button title={`Delete ${p.code} and all their sessions/recordings`}
+                    onClick={async () => {
+                      if (confirm(`Delete participant "${p.code}" and ALL their sessions and recordings? This cannot be undone.`)) {
+                        await api.deleteParticipant(p.id);
+                        refresh();
+                      }
+                    }}
+                    style={{ color: "var(--err)", lineHeight: 0 }}><Trash2 size={11} /></button>
+                </span>
               ))}
             </div>
             <div className="mt-2 flex gap-2">

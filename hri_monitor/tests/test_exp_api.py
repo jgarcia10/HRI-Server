@@ -71,3 +71,39 @@ def test_active_status_shape(tmp_path):
     assert st["condition"] == "Baseline"
     assert "elapsed" in st and "sample_count" in st and "markers" in st
     client.post(f"/api/recordings/{rec}/stop")
+
+
+def test_delete_recording_and_session(tmp_path):
+    db, ctrl, client = make_client(tmp_path)
+    exp = client.post("/api/experiments", json={"name": "S"}).json()["id"]
+    client.put(f"/api/experiments/{exp}/conditions", json={"conditions": ["Baseline"]})
+    cond = client.get(f"/api/experiments/{exp}").json()["conditions"][0]["id"]
+    part = client.post(f"/api/experiments/{exp}/participants", json={"code": "P01"}).json()["id"]
+    # record one, stop it, then delete the recording
+    rec = client.post("/api/recordings/start",
+                      json={"experiment_id": exp, "participant_id": part, "condition_id": cond}).json()["recording_id"]
+    client.post(f"/api/recordings/{rec}/stop")
+    assert client.delete(f"/api/recordings/{rec}").status_code == 200
+    assert client.get(f"/api/recordings/{rec}").status_code == 404
+    # record another, then delete the whole session
+    r2 = client.post("/api/recordings/start",
+                     json={"experiment_id": exp, "participant_id": part, "condition_id": cond}).json()
+    client.post(f"/api/recordings/{r2['recording_id']}/stop")
+    sess = r2["session_id"]
+    assert client.delete(f"/api/sessions/{sess}").status_code == 200
+    assert all(s["id"] != sess for s in client.get(f"/api/experiments/{exp}/sessions").json())
+
+
+def test_cannot_delete_active_recording(tmp_path):
+    db, ctrl, client = make_client(tmp_path)
+    exp = client.post("/api/experiments", json={"name": "S"}).json()["id"]
+    client.put(f"/api/experiments/{exp}/conditions", json={"conditions": ["Baseline"]})
+    cond = client.get(f"/api/experiments/{exp}").json()["conditions"][0]["id"]
+    part = client.post(f"/api/experiments/{exp}/participants", json={"code": "P01"}).json()["id"]
+    started = client.post("/api/recordings/start",
+                          json={"experiment_id": exp, "participant_id": part, "condition_id": cond}).json()
+    rec, sess = started["recording_id"], started["session_id"]
+    assert client.delete(f"/api/recordings/{rec}").status_code == 409   # active → refused
+    assert client.delete(f"/api/sessions/{sess}").status_code == 409
+    client.post(f"/api/recordings/{rec}/stop")
+    assert client.delete(f"/api/recordings/{rec}").status_code == 200   # now allowed
