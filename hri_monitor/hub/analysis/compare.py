@@ -60,7 +60,7 @@ def _magnitude(name, value):
         return "large" if a >= 0.8 else "medium" if a >= 0.5 else "small"
     if name == "rank-biserial":
         return "large" if a >= 0.5 else "medium" if a >= 0.3 else "small"
-    if name in ("partial eta^2", "generalized eta^2"):
+    if name in ("partial eta^2", "generalized eta^2", "epsilon^2"):
         return "large" if a >= 0.14 else "medium" if a >= 0.06 else "small"
     if name == "Kendall W":
         return "large" if a >= 0.5 else "medium" if a >= 0.3 else "small"
@@ -132,7 +132,9 @@ def run_test(g, condition_ids, cond_names):
             else:
                 r = pg.kruskal(data=df, dv="value", between="condition")
                 test = "Kruskal-Wallis"; stat, p = float(r["H"].iloc[0]), float(r["p_unc"].iloc[0])
-                eff = {"name": "rank-biserial", "value": 0.0}
+                n_total = len(df)
+                eps2 = (stat - k + 1) / (n_total - k) if n_total > k else 0.0
+                eff = {"name": "epsilon^2", "value": float(eps2)}
         if p < 0.05:
             kw = {"within": "condition", "subject": "subject"} if paired else {"between": "condition"}
             pt = pg.pairwise_tests(data=df, dv="value", padjust="holm", **kw)
@@ -156,7 +158,7 @@ def run_test(g, condition_ids, cond_names):
     return {"ok": True, "test": test, "design": "paired" if g["paired"] else "unpaired",
             "normal": normal, "statistic": stat, "p": p, "effect_size": eff,
             "descriptives": descr, "posthoc": posthoc,
-            "values": [{"condition": cond_names.get(r["condition_id"] if "condition_id" in r else r["condition"], ""),
+            "values": [{"condition": cond_names.get(r["condition_id"], ""),
                         "subject": r["subject"], "value": r["value"]} for r in rows],
             "interpretation": interp}
 
