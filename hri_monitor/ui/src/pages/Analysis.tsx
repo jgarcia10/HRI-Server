@@ -18,6 +18,7 @@ export function Analysis() {
   const [results, setResults] = useState<AnalysisResult[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastReq, setLastReq] = useState<CompareReq | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const toggle = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 
@@ -30,10 +31,13 @@ export function Analysis() {
   const run = async () => {
     if (expId == null) return;
     const req: CompareReq = { experiment_id: expId, condition_ids: condIds, signal, features, unit };
-    setBusy(true); setLastReq(req);
+    setBusy(true); setLastReq(req); setError(null);
     try {
       const r = await analysisApi.compare(req);
       setResults(r.results);
+    } catch {
+      setResults(null);
+      setError("Analysis request failed. Check that the server is running and try again.");
     } finally { setBusy(false); }
   };
 
@@ -117,6 +121,10 @@ export function Analysis() {
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className="glass p-4 text-sm" style={{ color: "var(--err)" }}>{error}</div>
+      )}
 
       {/* results: one block per feature */}
       {results && lastReq && results.length === 0 && (
