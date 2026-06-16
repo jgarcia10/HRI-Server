@@ -16,9 +16,16 @@ function downloadJson(res: AnalysisResult) {
     `analysis_${res.signal ?? "signal"}_${res.feature}.json`);
 }
 
+// RFC4180-style CSV field escaping: quote if the field contains comma/quote/newline
+function csvField(v: unknown): string {
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 function downloadCsv(res: AnalysisResult) {
   const rows = ["condition,subject,signal,feature,value"];
-  for (const v of res.values ?? []) rows.push(`${v.condition},${v.subject},${res.signal ?? ""},${res.feature},${v.value}`);
+  for (const v of res.values ?? [])
+    rows.push([v.condition, v.subject, res.signal ?? "", res.feature, v.value].map(csvField).join(","));
   downloadBlob(rows.join("\n"), "text/csv", `analysis_${res.signal ?? "signal"}_${res.feature}_values.csv`);
 }
 
