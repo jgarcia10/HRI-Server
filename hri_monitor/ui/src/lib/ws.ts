@@ -12,6 +12,8 @@ export type LiveState = {
 const SERIES_EXTRACTORS: Record<string, (d: any) => number> = {
   "shimmer.gsr": (d) => d.value,
   "shimmer.ppg": (d) => d.value,
+  "ppg.hr": (d) => d.value,
+  "ppg.hrv": (d) => d.value,
   "rgb.blink": (d) => d.rate,
   "thermal.temps": (d) => d.forehead,
 };
