@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ResultBlock } from "../components/analysis/ResultBlock";
 import {
   type AnalysisResult, type CompareReq, analysisApi, useAnalysisOptions,
-  FEATURE_LABELS, SIGNAL_LABELS,
+  FEATURE_LABELS, SIGNAL_LABELS, NORMALIZATION_LABELS,
 } from "../lib/analysis";
 import { useExperiments } from "../lib/experiments";
 
@@ -11,10 +11,11 @@ export function Analysis() {
   const [expId, setExpId] = useState<number | null>(null);
   const options = useAnalysisOptions(expId);
 
-  const [signal, setSignal] = useState<string>("");
+  const [signals, setSignals] = useState<string[]>([]);
   const [features, setFeatures] = useState<string[]>(["mean"]);
   const [condIds, setCondIds] = useState<number[]>([]);
   const [unit, setUnit] = useState<"participant" | "recording">("participant");
+  const [normalize, setNormalize] = useState<"none" | "range" | "zscore">("none");
   const [results, setResults] = useState<AnalysisResult[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastReq, setLastReq] = useState<CompareReq | null>(null);
@@ -23,14 +24,14 @@ export function Analysis() {
   const toggle = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
 
   const onPickExp = (id: number) => {
-    setExpId(id); setSignal(""); setCondIds([]); setResults(null);
+    setExpId(id); setSignals([]); setCondIds([]); setResults(null); setError(null);
   };
 
-  const canRun = expId != null && signal && features.length > 0 && condIds.length >= 2 && !busy;
+  const canRun = expId != null && signals.length > 0 && features.length > 0 && condIds.length >= 2 && !busy;
 
   const run = async () => {
     if (expId == null) return;
-    const req: CompareReq = { experiment_id: expId, condition_ids: condIds, signal, features, unit };
+    const req: CompareReq = { experiment_id: expId, condition_ids: condIds, signals, features, unit, normalize };
     setBusy(true); setLastReq(req); setError(null);
     try {
       const r = await analysisApi.compare(req);
@@ -42,12 +43,15 @@ export function Analysis() {
   };
 
   const lbl = { fontSize: 10, textTransform: "uppercase" as const, letterSpacing: "0.05em", color: "var(--text-muted)" };
+  const chipStyle = (on: boolean) =>
+    on
+      ? { background: "color-mix(in srgb, var(--accent) 18%, transparent)", color: "var(--accent)", border: "1px solid var(--accent)" }
+      : { color: "var(--text-muted)", border: "1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)" };
 
   return (
     <div className="space-y-4">
       <h2 className="text-sm font-semibold" style={{ color: "var(--text)" }}>Analysis</h2>
 
-      {/* control bar */}
       <div className="glass space-y-3 p-4">
         <div className="grid gap-3 md:grid-cols-3">
           <div>
@@ -59,26 +63,36 @@ export function Analysis() {
             </select>
           </div>
           <div>
-            <div style={lbl} className="mb-1">Signal</div>
-            <select className="an-sel" value={signal} onChange={(e) => setSignal(e.target.value)}
-              disabled={!options}>
-              <option value="" disabled>Select…</option>
-              {options?.signals.map((s) => <option key={s} value={s}>{SIGNAL_LABELS[s] ?? s}</option>)}
-            </select>
-          </div>
-          <div>
             <div style={lbl} className="mb-1">Unit of analysis</div>
             <div className="flex gap-2">
               {(["participant", "recording"] as const).map((u) => (
                 <button key={u} onClick={() => setUnit(u)}
-                  className="rounded-full px-3 py-1 text-[11px] font-semibold"
-                  style={unit === u
-                    ? { background: "color-mix(in srgb, var(--accent) 18%, transparent)", color: "var(--accent)", border: "1px solid var(--accent)" }
-                    : { color: "var(--text-muted)", border: "1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)" }}>
+                  className="rounded-full px-3 py-1 text-[11px] font-semibold" style={chipStyle(unit === u)}>
                   {u === "participant" ? "Per participant" : "Per recording"}
                 </button>
               ))}
             </div>
+          </div>
+          <div>
+            <div style={lbl} className="mb-1">Normalization</div>
+            <select className="an-sel" value={normalize}
+              onChange={(e) => setNormalize(e.target.value as "none" | "range" | "zscore")}>
+              {(options?.normalizations ?? ["none", "range", "zscore"]).map((n) => (
+                <option key={n} value={n}>{NORMALIZATION_LABELS[n] ?? n}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <div style={lbl} className="mb-1">Signals (pick ≥ 1)</div>
+          <div className="flex flex-wrap gap-2">
+            {options?.signals.map((s) => (
+              <button key={s} onClick={() => setSignals((a) => toggle(a, s))}
+                className="rounded-full px-3 py-1 text-[11px] font-semibold" style={chipStyle(signals.includes(s))}>
+                {SIGNAL_LABELS[s] ?? s}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -87,10 +101,7 @@ export function Analysis() {
           <div className="flex flex-wrap gap-2">
             {options?.features.map((f) => (
               <button key={f} onClick={() => setFeatures((a) => toggle(a, f))}
-                className="rounded-full px-3 py-1 text-[11px] font-semibold"
-                style={features.includes(f)
-                  ? { background: "color-mix(in srgb, var(--accent) 18%, transparent)", color: "var(--accent)", border: "1px solid var(--accent)" }
-                  : { color: "var(--text-muted)", border: "1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)" }}>
+                className="rounded-full px-3 py-1 text-[11px] font-semibold" style={chipStyle(features.includes(f))}>
                 {FEATURE_LABELS[f] ?? f}
               </button>
             ))}
@@ -102,10 +113,7 @@ export function Analysis() {
           <div className="flex flex-wrap gap-2">
             {options?.conditions.map((c) => (
               <button key={c.id} onClick={() => setCondIds((a) => toggle(a, c.id))}
-                className="rounded-full px-3 py-1 text-[11px] font-semibold"
-                style={condIds.includes(c.id)
-                  ? { background: "color-mix(in srgb, var(--accent) 18%, transparent)", color: "var(--accent)", border: "1px solid var(--accent)" }
-                  : { color: "var(--text-muted)", border: "1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)" }}>
+                className="rounded-full px-3 py-1 text-[11px] font-semibold" style={chipStyle(condIds.includes(c.id))}>
                 {c.name}
               </button>
             ))}
@@ -125,13 +133,11 @@ export function Analysis() {
       {error && (
         <div className="glass p-4 text-sm" style={{ color: "var(--err)" }}>{error}</div>
       )}
-
-      {/* results: one block per feature */}
       {results && lastReq && results.length === 0 && (
         <div className="glass p-4 text-sm" style={{ color: "var(--text-muted)" }}>No results.</div>
       )}
       {results && lastReq && results.map((res, i) => (
-        <ResultBlock key={`${res.feature}-${i}`} res={res} req={lastReq} />
+        <ResultBlock key={`${res.signal}-${res.feature}-${i}`} res={res} req={lastReq} />
       ))}
     </div>
   );

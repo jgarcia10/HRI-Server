@@ -48,7 +48,7 @@ export function ResultBlock({ res, req }: { res: AnalysisResult; req: CompareReq
   }
 
   const sig = (res.p ?? 1) < 0.05;
-  const plotBase = { experiment_id: req.experiment_id, condition_ids: req.condition_ids, signal: req.signal, unit: req.unit };
+  const plotBase = { experiment_id: req.experiment_id, condition_ids: req.condition_ids, unit: req.unit, normalize: req.normalize };
 
   return (
     <div className="glass p-4 space-y-3">
@@ -79,7 +79,7 @@ export function ResultBlock({ res, req }: { res: AnalysisResult; req: CompareReq
             {featLabel} {sigLabel} by condition · violin + box
           </div>
           <img className="w-full rounded-lg bg-white" alt={`${featLabel} ${sigLabel} by condition`}
-            src={analysisApi.plotUrl(plotBase, res.feature, "svg")} />
+            src={analysisApi.plotUrl(plotBase, res.signal ?? "", res.feature, "svg")} />
         </div>
 
         {/* descriptives + post-hoc */}
@@ -113,8 +113,8 @@ export function ResultBlock({ res, req }: { res: AnalysisResult; req: CompareReq
             </div>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
-            <a className="chip-dl" href={analysisApi.plotUrl(plotBase, res.feature, "svg")}>⬇ SVG</a>
-            <a className="chip-dl" href={analysisApi.plotUrl(plotBase, res.feature, "pdf")}>⬇ PDF</a>
+            <a className="chip-dl" href={analysisApi.plotUrl(plotBase, res.signal ?? "", res.feature, "svg")}>⬇ SVG</a>
+            <a className="chip-dl" href={analysisApi.plotUrl(plotBase, res.signal ?? "", res.feature, "pdf")}>⬇ PDF</a>
             <button className="chip-dl" onClick={() => downloadCsv(res)}>⬇ values CSV</button>
             <button className="chip-dl" onClick={() => downloadJson(res)}>⬇ JSON</button>
           </div>

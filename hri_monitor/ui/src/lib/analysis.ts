@@ -9,6 +9,7 @@ export type AnalysisResult = {
   feature: string;
   signal?: string;
   unit?: string;
+  normalize?: string;
   reason?: string;                 // when ok === false
   test?: string;
   design?: "paired" | "unpaired";
@@ -24,14 +25,16 @@ export type AnalysisResult = {
 export type AnalysisOptions = {
   signals: string[];
   features: string[];
+  normalizations?: string[];
   conditions: { id: number; name: string }[];
 };
 export type CompareReq = {
   experiment_id: number;
   condition_ids: number[];
-  signal: string;
+  signals: string[];
   features: string[];
   unit: "participant" | "recording";
+  normalize: "none" | "range" | "zscore";
 };
 
 export const SIGNAL_LABELS: Record<string, string> = {
@@ -41,7 +44,11 @@ export const SIGNAL_LABELS: Record<string, string> = {
   "thermal.right_cheek": "R cheek (°C)", "thermal.nose": "Nose (°C)",
 };
 export const FEATURE_LABELS: Record<string, string> = {
-  mean: "Mean", sd: "SD", min: "Min", max: "Max", slope: "Slope", peaks_per_min: "Peaks/min",
+  mean: "Mean", sd: "SD", min: "Min", max: "Max", slope: "Slope",
+  peaks_per_min: "Peaks/min", auc_per_min: "Cumulative AUC/min",
+};
+export const NORMALIZATION_LABELS: Record<string, string> = {
+  none: "None (raw)", range: "Range 0–1", zscore: "Z-score",
 };
 
 async function j<T>(url: string, opts?: RequestInit): Promise<T> {
@@ -55,13 +62,16 @@ export const analysisApi = {
     j<{ results: AnalysisResult[] }>("/api/analysis/compare", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req),
     }),
-  // plot download URL (used as <a href> so the browser saves the file)
-  plotUrl: (req: Omit<CompareReq, "features">, feature: string, format: "svg" | "pdf") => {
+  // plot download URL (used as <a href> / <img src> so the browser renders/saves it)
+  plotUrl: (
+    base: { experiment_id: number; condition_ids: number[]; unit: string; normalize: string },
+    signal: string, feature: string, format: "svg" | "pdf",
+  ) => {
     const p = new URLSearchParams();
-    p.set("experiment_id", String(req.experiment_id));
-    req.condition_ids.forEach((c) => p.append("condition_ids", String(c)));
-    p.set("signal", req.signal); p.set("feature", feature);
-    p.set("unit", req.unit); p.set("format", format);
+    p.set("experiment_id", String(base.experiment_id));
+    base.condition_ids.forEach((c) => p.append("condition_ids", String(c)));
+    p.set("signal", signal); p.set("feature", feature);
+    p.set("unit", base.unit); p.set("format", format); p.set("normalize", base.normalize);
     return `/api/analysis/plot?${p.toString()}`;
   },
 };
