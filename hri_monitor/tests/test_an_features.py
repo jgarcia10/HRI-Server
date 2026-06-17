@@ -10,7 +10,7 @@ def write(tmp_path, rows):
 
 
 def test_feature_list():
-    assert FEATURES == ["mean", "sd", "min", "max", "slope", "peaks_per_min"]
+    assert FEATURES == ["mean", "sd", "min", "max", "slope", "peaks_per_min", "auc_per_min"]
 
 
 def test_mean_sd_min_max(tmp_path):
@@ -55,3 +55,27 @@ def test_peaks_zero_for_flat_signal(tmp_path):
     p = write(tmp_path, [(i * 0.4, "rgb.blink", 3.0) for i in range(10)])
     f = extract_features(p, "rgb.blink")
     assert f["peaks_per_min"] == 0.0
+
+
+def test_feature_list_includes_auc():
+    assert FEATURES == ["mean", "sd", "min", "max", "slope", "peaks_per_min", "auc_per_min"]
+
+
+def test_auc_per_min_constant_signal(tmp_path):
+    # constant 2.0 sampled over exactly 1.0 s → trapz = 2.0 (µS·s); /(1/60 min) = 120
+    p = write(tmp_path, [(t / 10, "shimmer.gsr", 2.0) for t in range(11)])
+    f = extract_features(p, "shimmer.gsr")
+    assert math.isclose(f["auc_per_min"], 120.0, rel_tol=1e-6)
+
+
+def test_auc_per_min_zero_for_single_point(tmp_path):
+    p = write(tmp_path, [(0.0, "shimmer.gsr", 5.0)])
+    assert extract_features(p, "shimmer.gsr")["auc_per_min"] == 0.0
+
+
+def test_transform_is_applied_before_features(tmp_path):
+    # transform doubling the values doubles the mean
+    p = write(tmp_path, [(0.0, "ppg.hr", 2.0), (0.1, "ppg.hr", 4.0)])
+    raw = extract_features(p, "ppg.hr")
+    doubled = extract_features(p, "ppg.hr", transform=lambda v: v * 2)
+    assert math.isclose(doubled["mean"], raw["mean"] * 2, rel_tol=1e-9)

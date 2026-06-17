@@ -3,7 +3,9 @@ import csv
 
 import numpy as np
 
-FEATURES = ["mean", "sd", "min", "max", "slope", "peaks_per_min"]
+_trapz = getattr(np, "trapezoid", np.trapz)  # numpy>=2 renamed trapz → trapezoid
+
+FEATURES = ["mean", "sd", "min", "max", "slope", "peaks_per_min", "auc_per_min"]
 _REFRACTORY_S = 0.3
 _PEAK_K_SD = 0.5
 
@@ -44,11 +46,24 @@ def _peaks_per_min(ts, vs):
     return float(count / duration_min) if duration_min > 0 else 0.0
 
 
-def extract_features(csv_path, signal) -> dict | None:
-    """Return {mean,sd,min,max,slope,peaks_per_min} for `signal`, or None if absent."""
+def _auc_per_min(ts, vs):
+    if len(vs) < 2 or len(ts) < 2:
+        return 0.0
+    duration_min = (ts[-1] - ts[0]) / 60.0
+    if duration_min == 0:
+        return 0.0
+    return float(_trapz(vs, ts) / duration_min)
+
+
+def extract_features(csv_path, signal, transform=None) -> dict | None:
+    """Return {mean,sd,min,max,slope,peaks_per_min,auc_per_min} for `signal`, or None
+    if absent. If `transform` is given, it is applied to the values array before any
+    feature is computed (used for per-user normalization)."""
     ts, vs = _read_signal(csv_path, signal)
     if len(vs) == 0:
         return None
+    if transform is not None:
+        vs = transform(vs)
     return {
         "mean": float(np.mean(vs)),
         "sd": float(np.std(vs)),
@@ -56,4 +71,5 @@ def extract_features(csv_path, signal) -> dict | None:
         "max": float(np.max(vs)),
         "slope": _slope(ts, vs),
         "peaks_per_min": _peaks_per_min(ts, vs),
+        "auc_per_min": _auc_per_min(ts, vs),
     }
