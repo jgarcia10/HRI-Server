@@ -83,3 +83,23 @@ def test_missing_csv_path_is_skipped(tmp_path):
     ]
     g = gather(FakeDB(rows), 1, [1], "shimmer.gsr", "mean", "recording")
     assert g["counts"][1] == 1  # only the readable recording contributed
+
+
+def test_gather_normalize_preserves_condition_order(tmp_path):
+    # P1 & P2 each: cond1 lower than cond2. Range-normalize per participant across
+    # both conditions → absolute values change but A<B per participant is preserved.
+    class FullFakeDB(FakeDB):
+        def recordings_for_experiment(self, experiment_id):
+            return list(self._rows)
+
+    rows = [
+        {"participant_id": 1, "condition_id": 1, "csv_path": make_csv(tmp_path, "a", "shimmer.gsr", [0.0, 2.0])},
+        {"participant_id": 2, "condition_id": 1, "csv_path": make_csv(tmp_path, "b", "shimmer.gsr", [10.0, 12.0])},
+        {"participant_id": 1, "condition_id": 2, "csv_path": make_csv(tmp_path, "c", "shimmer.gsr", [8.0, 10.0])},
+        {"participant_id": 2, "condition_id": 2, "csv_path": make_csv(tmp_path, "d", "shimmer.gsr", [18.0, 20.0])},
+    ]
+    g = gather(FullFakeDB(rows), 1, [1, 2], "shimmer.gsr", "mean", "participant", normalize="range")
+    by = {(r["subject"], r["condition_id"]): r["value"] for r in g["rows"]}
+    assert by[(1, 1)] < by[(1, 2)] and by[(2, 1)] < by[(2, 2)]   # order preserved
+    # P1 global range is [0,10]; cond1 mean=1 → 0.1, cond2 mean=9 → 0.9
+    assert abs(by[(1, 1)] - 0.1) < 1e-9 and abs(by[(1, 2)] - 0.9) < 1e-9

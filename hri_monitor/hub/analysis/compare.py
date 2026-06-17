@@ -3,9 +3,10 @@ the unit of analysis, auto-detect pairing, and run the auto-selected pingouin te
 from collections import defaultdict
 
 from .features import extract_features
+from .normalize import participant_transforms
 
 
-def gather(db, experiment_id, condition_ids, signal, feature, unit):
+def gather(db, experiment_id, condition_ids, signal, feature, unit, normalize="none"):
     """Return {rows: [{subject, condition_id, value}], paired: bool, counts: {cond: n}}.
 
     rows are one value per unit of analysis. `subject` is the participant id
@@ -13,12 +14,13 @@ def gather(db, experiment_id, condition_ids, signal, feature, unit):
     recording is its own row). Pairing = per-participant AND identical participant
     set across all conditions (complete cases only)."""
     recs = db.recordings_for_conditions(experiment_id, condition_ids)
+    transforms = participant_transforms(db, experiment_id, signal, normalize) if normalize != "none" else {}
     # condition -> participant -> [feature values across that participant's recordings]
     per = defaultdict(lambda: defaultdict(list))
     recording_rows = []  # for the per-recording unit
     for r in recs:
         try:
-            f = extract_features(r["csv_path"], signal)
+            f = extract_features(r["csv_path"], signal, transform=transforms.get(r["participant_id"]))
         except OSError:
             continue  # stale/missing/unreadable csv_path → skip this recording
         if f is None or feature not in f:
@@ -167,10 +169,11 @@ def run_test(g, condition_ids, cond_names):
             "interpretation": interp}
 
 
-def compare(db, experiment_id, condition_ids, signal, feature, unit, cond_names):
-    g = gather(db, experiment_id, condition_ids, signal, feature, unit)
+def compare(db, experiment_id, condition_ids, signal, feature, unit, cond_names, normalize="none"):
+    g = gather(db, experiment_id, condition_ids, signal, feature, unit, normalize)
     res = run_test(g, condition_ids, cond_names)
     res["signal"] = signal
     res["feature"] = feature
     res["unit"] = unit
+    res["normalize"] = normalize
     return res

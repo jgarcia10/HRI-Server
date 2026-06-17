@@ -75,3 +75,22 @@ def test_kruskal_effect_size_is_epsilon_squared():
     else:
         # if normality wasn't rejected on this small sample, at least ensure no fake rank-biserial=0
         assert res["effect_size"]["name"] in ("partial eta^2", "epsilon^2")
+
+
+def test_compare_adds_normalize_tag(tmp_path):
+    class DB:
+        def __init__(self, rows): self._rows = rows
+        def recordings_for_conditions(self, e, cids): return [r for r in self._rows if r["condition_id"] in cids]
+        def recordings_for_experiment(self, e): return list(self._rows)
+    from hub.analysis.compare import compare
+    def mk(name, vals):
+        p = tmp_path / name
+        p.write_text("t_offset,signal,value\n" + "".join(f"{i*0.1},shimmer.gsr,{v}\n" for i, v in enumerate(vals)))
+        return str(p)
+    rows = []
+    for pid in (1, 2, 3):
+        rows.append({"participant_id": pid, "condition_id": 1, "csv_path": mk(f"{pid}a", [1.0 + pid, 2.0 + pid, 3.0 + pid])})
+        rows.append({"participant_id": pid, "condition_id": 2, "csv_path": mk(f"{pid}b", [4.0 + pid, 5.0 + pid, 6.0 + pid])})
+    res = compare(DB(rows), 1, [1, 2], "shimmer.gsr", "mean", "participant", {1: "A", 2: "B"}, normalize="zscore")
+    assert res["normalize"] == "zscore"
+    assert res["ok"] is True and res["signal"] == "shimmer.gsr"
