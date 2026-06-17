@@ -7,6 +7,8 @@ from collections import defaultdict
 
 import numpy as np
 
+from .clean import clean_values
+
 
 def _read_values(csv_path, signal):
     vs = []
@@ -27,11 +29,11 @@ def participant_values(db, experiment_id, signal):
     out = defaultdict(list)
     for r in db.recordings_for_experiment(experiment_id):
         try:
-            vals = _read_values(r["csv_path"], signal)
+            vals = clean_values(signal, _read_values(r["csv_path"], signal))
         except OSError:
             continue
-        if vals:
-            out[r["participant_id"]].extend(vals)
+        if len(vals):
+            out[r["participant_id"]].extend(vals.tolist())
     return {pid: np.array(v, dtype=float) for pid, v in out.items()}
 
 
@@ -39,7 +41,8 @@ def params(values, method):
     """Return (a, b) so the transform is (x - a) / b. Constant signal → b = 1.0."""
     values = np.asarray(values, dtype=float)
     if method == "range":
-        a = float(np.min(values)); b = float(np.max(values) - a)
+        a = float(np.percentile(values, 1))
+        b = float(np.percentile(values, 99)) - a
     elif method == "zscore":
         a = float(np.mean(values)); b = float(np.std(values))
     else:
@@ -47,13 +50,17 @@ def params(values, method):
     return (a, b if b != 0 else 1.0)
 
 
-def _make_transform(a, b):
-    return lambda v: (np.asarray(v, dtype=float) - a) / b
+def _make_transform(a, b, clip=None):
+    if clip is None:
+        return lambda v: (np.asarray(v, dtype=float) - a) / b
+    lo, hi = clip
+    return lambda v: np.clip((np.asarray(v, dtype=float) - a) / b, lo, hi)
 
 
 def participant_transforms(db, experiment_id, signal, method):
     """{participant_id: callable(np.ndarray)->np.ndarray} or {} for method 'none'."""
     if method not in ("range", "zscore"):
         return {}
-    return {pid: _make_transform(*params(vals, method))
+    clip = (0.0, 1.0) if method == "range" else None
+    return {pid: _make_transform(*params(vals, method), clip=clip)
             for pid, vals in participant_values(db, experiment_id, signal).items()}

@@ -16,9 +16,17 @@ def make_csv(tmp_path, name, signal, values):
     return str(p)
 
 
-def test_params_range():
+def test_params_range_uses_percentiles():
+    import pytest
     a, b = params([2.0, 4.0, 6.0], "range")
-    assert a == 2.0 and b == 4.0  # min=2, max-min=4
+    # 1st/99th percentile of [2,4,6] = 2.04 / 5.96 → a=2.04, b=3.92 (not min/max 2/4)
+    assert a == pytest.approx(2.04, abs=1e-6) and b == pytest.approx(3.92, abs=1e-6)
+
+
+def test_params_range_ignores_outlier():
+    # bulk 0..100 plus a giant artifact → range from percentiles, NOT dominated by 1e9
+    a, b = params(list(range(0, 101)) + [1e9], "range")
+    assert b < 110  # would be ~1e9 under raw min-max
 
 
 def test_params_zscore():

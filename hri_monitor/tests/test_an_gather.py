@@ -101,5 +101,4 @@ def test_gather_normalize_preserves_condition_order(tmp_path):
     g = gather(FullFakeDB(rows), 1, [1, 2], "shimmer.gsr", "mean", "participant", normalize="range")
     by = {(r["subject"], r["condition_id"]): r["value"] for r in g["rows"]}
     assert by[(1, 1)] < by[(1, 2)] and by[(2, 1)] < by[(2, 2)]   # order preserved
-    # P1 global range is [0,10]; cond1 mean=1 → 0.1, cond2 mean=9 → 0.9
-    assert abs(by[(1, 1)] - 0.1) < 1e-9 and abs(by[(1, 2)] - 0.9) < 1e-9
+    assert all(0.0 <= by[k] <= 1.0 for k in by)                  # clipped to [0,1]

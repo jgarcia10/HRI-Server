@@ -79,3 +79,10 @@ def test_transform_is_applied_before_features(tmp_path):
     raw = extract_features(p, "ppg.hr")
     doubled = extract_features(p, "ppg.hr", transform=lambda v: v * 2)
     assert math.isclose(doubled["mean"], raw["mean"] * 2, rel_tol=1e-9)
+
+
+def test_negative_gsr_artifact_is_dropped(tmp_path):
+    # a negative GSR artifact among valid samples is excluded from the mean
+    p = write(tmp_path, [(0.0, "shimmer.gsr", 2.0), (0.1, "shimmer.gsr", -999.0), (0.2, "shimmer.gsr", 4.0)])
+    f = extract_features(p, "shimmer.gsr")
+    assert f["mean"] == 3.0  # mean of [2, 4]; the -999 dropped

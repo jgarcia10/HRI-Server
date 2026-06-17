@@ -3,6 +3,8 @@ import csv
 
 import numpy as np
 
+from .clean import clean
+
 _trapz = getattr(np, "trapezoid", np.trapz)  # numpy>=2 renamed trapz → trapezoid
 
 FEATURES = ["mean", "sd", "min", "max", "slope", "peaks_per_min", "auc_per_min"]
@@ -21,7 +23,7 @@ def _read_signal(csv_path, signal):
                     ts.append(float(row[0])); vs.append(float(row[2]))
                 except ValueError:
                     continue
-    return np.array(ts), np.array(vs)
+    return clean(signal, np.array(ts, dtype=float), np.array(vs, dtype=float))
 
 
 def _slope(ts, vs):
