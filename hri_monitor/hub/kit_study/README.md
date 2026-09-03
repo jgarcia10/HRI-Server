@@ -1,7 +1,7 @@
 # hub/kit_study — Anticipate, Regulate, Remember (kit-assembly study)
 
 M1 layer: task engine + participant screen + wizard, recording through the standard
-hri_monitor pipeline. Spec: `ICRA 2027 - Cristi/docs/superpowers/specs/2026-09-03-…`.
+hri_monitor pipeline. Spec: `ICRA 2027 - Cristi/docs/superpowers/specs/2026-09-03-kit-study-integration-design.md`.
 
 ## Run a sim block (no hardware)
 

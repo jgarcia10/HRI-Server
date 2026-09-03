@@ -2,7 +2,6 @@
 import csv
 import time
 
-import pytest
 from fastapi.testclient import TestClient
 
 from hub.bus import MessageBus
