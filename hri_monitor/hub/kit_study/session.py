@@ -42,12 +42,19 @@ class KitSession:
         part_id = self._ensure_participant(exp_id, participant_code)
         rec = self.controller.start(condition_id=cond_id, experiment_id=exp_id,
                                     participant_id=part_id)
-        self.bus.subscribe("*", self._on_bus)
-        self.engine = TaskEngine(self.bus, spec, now=self.now, rng=random.Random())
-        self.engine.start_block()
-        self._stop_evt.clear()
-        self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
-        self._ticker.start()
+        try:
+            self.bus.subscribe("*", self._on_bus)
+            self.engine = TaskEngine(self.bus, spec, now=self.now, rng=random.Random())
+            self.engine.start_block()
+            self._stop_evt.clear()
+            self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
+            self._ticker.start()
+        except Exception:
+            # clean up: unsubscribe, stop recording, reset engine
+            self.bus.unsubscribe("*", self._on_bus)
+            self.controller.stop()
+            self.engine = None
+            raise
         self._info = {**rec, "condition": condition, "participant": participant_code,
                       "block": spec.family}
         self.bus.publish("task.session", dict(self._info))

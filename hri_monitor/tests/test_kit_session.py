@@ -63,3 +63,28 @@ def test_reuses_existing_experiment(stack):
     sess.start("P01", "C1", "orders_f1.yaml")
     assert len([e for e in db.list_experiments() if e["name"] == EXPERIMENT_NAME]) == 1
     sess.stop()
+
+
+def test_start_failure_cleans_up_recording_and_subscription(stack, monkeypatch):
+    bus, db, ctrl, sess = stack
+    # Force TaskEngine.start_block() to raise
+    from hub.kit_study.task_engine import TaskEngine
+    original_start_block = TaskEngine.start_block
+    def failing_start_block(self):
+        raise ValueError("simulated start_block failure")
+    monkeypatch.setattr(TaskEngine, "start_block", failing_start_block)
+
+    # Attempt to start; expect exception to propagate
+    with pytest.raises(ValueError, match="simulated start_block failure"):
+        sess.start("P01", "C0", "orders_f1.yaml")
+
+    # Verify cleanup: no active recording and _info is None
+    assert ctrl.status() is None, "recording should be stopped"
+    assert sess._info is None, "_info should be None"
+    assert sess.engine is None, "engine should be None"
+
+    # Verify subsequent start succeeds (bus subscription and controller are clean)
+    monkeypatch.setattr(TaskEngine, "start_block", original_start_block)
+    info = sess.start("P01", "C0", "orders_f1.yaml")
+    assert info["recording_id"] is not None
+    sess.stop()
