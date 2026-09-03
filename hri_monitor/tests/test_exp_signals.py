@@ -28,4 +28,7 @@ def test_recorded_topics_set():
     assert RECORDED_TOPICS == {
         "shimmer.gsr", "shimmer.ppg", "ppg.hr", "ppg.hrv",
         "rgb.blink", "thermal.temps", "model.estimates",
+        "task.countdown", "task.step", "task.order_started",
+        "task.part_placed", "task.perturbation",
+        "wizard.reposition", "wizard.speech",
     }

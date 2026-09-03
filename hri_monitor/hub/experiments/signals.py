@@ -3,6 +3,9 @@
 RECORDED_TOPICS = {
     "shimmer.gsr", "shimmer.ppg", "ppg.hr", "ppg.hrv",
     "rgb.blink", "thermal.temps", "model.estimates",
+    "task.countdown", "task.step", "task.order_started",
+    "task.part_placed", "task.perturbation",
+    "wizard.reposition", "wizard.speech",
 }
 _THERMAL_ROIS = ("forehead", "left_cheek", "right_cheek", "nose")
 
@@ -22,4 +25,12 @@ def sample_rows(topic: str, data: dict) -> list[tuple[str, float]]:
         if "trust" in data:
             out.append(("model.trust", float(data["trust"])))
         return out
+    if topic == "task.countdown":
+        return [("task.remaining_s", float(data["remaining_s"]))]
+    if topic == "task.step":
+        return [("task.step_index", float(data["step_index"]))]
+    if topic == "task.order_started":
+        return [("task.order_index", float(data["order_index"]))]
+    if topic in ("task.part_placed", "task.perturbation", "wizard.reposition", "wizard.speech"):
+        return [(topic, 1.0)]
     return []
