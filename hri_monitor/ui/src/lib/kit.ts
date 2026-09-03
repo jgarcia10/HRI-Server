@@ -22,6 +22,16 @@ export function useKitWs() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
+    // Seed initial state on mount/remount (page reload, tab switch): the WS only
+    // delivers task.state on the next change, so without this a reconnecting UI
+    // sits at task === null until something happens. Subsequent WS updates take over.
+    fetch("/api/kit/state")
+      .then((r) => r.json())
+      .then((d) => {
+        const t = d?.session?.task;
+        if (t) setTask(t as KitTaskState);
+      })
+      .catch(() => {});
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${proto}://${location.host}/ws`);

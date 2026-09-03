@@ -13,7 +13,11 @@ export function Runner() {
   const call = (fn: () => Promise<unknown>) => () =>
     fn().then(() => setError(null)).catch((e) => setError(String(e.message ?? e)));
 
-  const running = task !== null && task.phase !== "idle" && task.phase !== "done";
+  // "active" tracks whether a session/recording exists (any phase but idle) — this is
+  // what gates Start/Stop and the wizard controls. "done" still has an active session
+  // (Stop must remain enabled) until session.stop() tears it down and the engine
+  // publishes a fresh idle task.state.
+  const active = task !== null && task.phase !== "idle";
 
   return (
     <div className="space-y-4 p-2">
@@ -36,12 +40,12 @@ export function Runner() {
           </select>
         </label>
         <button className="rounded bg-emerald-600 px-4 py-2 text-white disabled:opacity-40"
-                disabled={running}
+                disabled={active}
                 onClick={call(() => startSession({ participant_code: participant, condition }))}>
           Start block
         </button>
         <button className="rounded bg-red-600 px-4 py-2 text-white disabled:opacity-40"
-                disabled={!running} onClick={call(stopSession)}>
+                disabled={!active} onClick={call(stopSession)}>
           Stop
         </button>
       </section>
@@ -64,7 +68,7 @@ export function Runner() {
 
       <section className="glass flex flex-wrap gap-3 p-4">
         <button className="rounded bg-blue-600 px-6 py-3 text-lg text-white disabled:opacity-40"
-                disabled={!running || task?.phase !== "running"}
+                disabled={!active || task?.phase !== "running"}
                 onClick={call(() => postEvent("part_placed"))}>
           ✔ Part placed
         </button>
@@ -75,7 +79,7 @@ export function Runner() {
         </button>
         {(["L", "C", "R"] as const).map((slot) => (
           <button key={slot} className="rounded bg-purple-600 px-4 py-3 text-white"
-                  disabled={!running}
+                  disabled={!active}
                   onClick={call(() => postEvent("reposition", { slot }))}>
             Repositioned → {slot}
           </button>
@@ -84,7 +88,7 @@ export function Runner() {
 
       <section className="glass flex flex-wrap items-center gap-2 p-4">
         {SPEECH.map((s) => (
-          <button key={s} className="rounded border px-3 py-2 text-sm" disabled={!running}
+          <button key={s} className="rounded border px-3 py-2 text-sm" disabled={!active}
                   onClick={call(() => postEvent("speech", { text: s }))}>
             "{s}"
           </button>
@@ -92,7 +96,7 @@ export function Runner() {
         <input className="min-w-64 flex-1 rounded border bg-transparent p-2 text-sm"
                placeholder="free-text speech…" value={freeText}
                onChange={(e) => setFreeText(e.target.value)} />
-        <button className="rounded border px-3 py-2 text-sm" disabled={!running || !freeText}
+        <button className="rounded border px-3 py-2 text-sm" disabled={!active || !freeText}
                 onClick={call(() => postEvent("speech", { text: freeText }).then(() => setFreeText("")))}>
           Send
         </button>
