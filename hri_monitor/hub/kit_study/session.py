@@ -12,8 +12,26 @@ from .task_engine import TaskEngine
 EXPERIMENT_NAME = "Kit Study"
 CONDITIONS = ("C0", "C1")
 _MARKER_TOPICS = {"task.order_started", "task.perturbation",
-                  "task.order_completed", "task.block_completed"}
+                  "task.order_completed", "task.block_completed",
+                  "wizard.speech", "wizard.reposition"}
 _CONFIGS_DIR = Path(__file__).parent / "configs"
+_SPEECH_LABEL_MAX = 120
+
+
+def _idle_task_state(block) -> dict:
+    """Full-shape task.state for a torn-down session (matches KitTaskState on the UI)."""
+    return {
+        "phase": "idle",
+        "order_index": -1,
+        "order_id": None,
+        "kind": None,
+        "step_index": 0,
+        "n_parts": 0,
+        "current_part": None,
+        "remaining_s": None,
+        "queue": [o.kind for o in block.orders] if block is not None else [],
+        "perturbation_applied": False,
+    }
 
 
 class KitSession:
@@ -68,8 +86,16 @@ class KitSession:
             self._ticker.join(timeout=2.0)
         self.engine.stop()
         self.bus.unsubscribe("*", self._on_bus)
-        out = self.controller.stop()
+        block = self.engine.block
+        status = self.controller.status()
+        if status is not None and status["recording_id"] == self._info["recording_id"]:
+            # Only stop the recording if it's still ours: an external stop (or a new
+            # recording started after that) must not be torn down by our teardown.
+            out = self.controller.stop()
+        else:
+            out = None
         info, self._info, self.engine = self._info, None, None
+        self.bus.publish("task.state", _idle_task_state(block))
         return {**(out or {}), "condition": info["condition"]}
 
     def status(self):
@@ -87,10 +113,17 @@ class KitSession:
         if topic not in _MARKER_TOPICS:
             return
         data = message["data"]
-        label = topic.removeprefix("task.")
-        oid = data.get("order_id") or data.get("family", "")
+        if topic == "wizard.speech":
+            text = str(data.get("text", ""))[:_SPEECH_LABEL_MAX]
+            label = f"speech:{text}"
+        elif topic == "wizard.reposition":
+            label = f"reposition:{data.get('slot', '?')}"
+        else:
+            prefix = topic.removeprefix("task.")
+            oid = data.get("order_id") or data.get("family", "")
+            label = f"{prefix}:{oid}"
         try:
-            self.controller.marker(f"{label}:{oid}", source="kit")
+            self.controller.marker(label, source="kit")
         except RuntimeError:
             pass  # recording already stopped
 

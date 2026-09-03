@@ -6,6 +6,7 @@ import pytest
 from hub.bus import MessageBus
 from hub.experiments.controller import RecordingController
 from hub.experiments.db import Database
+from hub.kit_study.orders import KIND_SEQUENCE
 from hub.kit_study.session import EXPERIMENT_NAME, KitSession
 
 
@@ -87,4 +88,68 @@ def test_start_failure_cleans_up_recording_and_subscription(stack, monkeypatch):
     monkeypatch.setattr(TaskEngine, "start_block", original_start_block)
     info = sess.start("P01", "C0", "orders_f1.yaml")
     assert info["recording_id"] is not None
+    sess.stop()
+
+
+def test_stop_publishes_final_idle_task_state(stack):
+    bus, db, ctrl, sess = stack
+    seen = []
+    bus.subscribe("task.state", lambda m: seen.append(m["data"]))
+    sess.start("P06", "C0", "orders_f1.yaml")
+    sess.stop()
+    assert seen, "expected at least one task.state publish"
+    assert seen[-1] == {
+        "phase": "idle",
+        "order_index": -1,
+        "order_id": None,
+        "kind": None,
+        "step_index": 0,
+        "n_parts": 0,
+        "current_part": None,
+        "remaining_s": None,
+        "queue": list(KIND_SEQUENCE),
+        "perturbation_applied": False,
+    }
+
+
+def test_wizard_events_recorded_as_markers(stack):
+    bus, db, ctrl, sess = stack
+    info = sess.start("P07", "C0", "orders_f1.yaml")
+    bus.publish("wizard.speech", {"text": "give me the red one"})
+    bus.publish("wizard.reposition", {"slot": "L"})
+    bus.publish("wizard.speech", {"text": "x" * 200})       # must be truncated
+    sess.stop()
+    rec = db.get_recording(info["recording_id"])
+    labels = [m["label"] for m in rec["markers"]]
+    assert "speech:give me the red one" in labels
+    assert "reposition:L" in labels
+    truncated = next(l for l in labels if l.startswith("speech:xxx"))
+    assert len(truncated) == len("speech:") + 120
+
+
+def test_stop_does_not_kill_an_unrelated_recording(stack):
+    bus, db, ctrl, sess = stack
+    info = sess.start("P08", "C0", "orders_f1.yaml")
+
+    # Something external stops our recording out from under the session...
+    stopped = ctrl.stop()
+    assert stopped["recording_id"] == info["recording_id"]
+
+    # ...and a new, unrelated recording is started against the same session row.
+    exp = next(e for e in db.list_experiments() if e["name"] == EXPERIMENT_NAME)
+    cond_id = next(c["id"] for c in db.get_experiment(exp["id"])["conditions"]
+                  if c["name"] == "C0")
+    new_rec = ctrl.start(condition_id=cond_id, session_id=info["session_id"])
+
+    # KitSession.stop() must not tear down that unrelated recording.
+    out = sess.stop()
+    assert ctrl.status() is not None
+    assert ctrl.status()["recording_id"] == new_rec["recording_id"]
+    assert out.get("recording_id") is None      # our stop() skipped controller.stop()
+    assert sess._info is None and sess.engine is None
+
+    # Once that unrelated recording is stopped, a fresh session starts cleanly.
+    ctrl.stop()
+    info2 = sess.start("P08", "C0", "orders_f1.yaml")
+    assert info2["recording_id"] is not None
     sess.stop()
