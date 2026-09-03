@@ -33,6 +33,11 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         app.state.recording_controller = experiments["controller"]
         from .analysis.router import build_analysis_router
         app.include_router(build_analysis_router(experiments["db"]))
+        from .kit_study.router import build_kit_router
+        from .kit_study.session import KitSession
+        kit_session = KitSession(bus, experiments["db"], experiments["controller"])
+        app.include_router(build_kit_router(kit_session, bus))
+        app.state.kit_session = kit_session
 
     @app.get("/api/status")
     def status():
