@@ -64,6 +64,7 @@ class TaskEngine:
     def tick(self):
         with self._lock:
             if self._phase != "running":
+                self._emit_state()
                 return
             order = self._order()
             t = self.now()
@@ -117,18 +118,20 @@ class TaskEngine:
 
     def _apply_perturbation(self):
         remaining = list(range(self._step_i, len(self._parts)))
-        if len(remaining) >= 2:
-            a, b = self.rng.sample(remaining, 2)
-            self._parts[a], self._parts[b] = self._parts[b], self._parts[a]
-        else:
-            a, b = self._step_i, self._step_i
+        if len(remaining) < 2:
+            # Too few parts left to swap. Don't publish a no-op perturbation or mark
+            # it applied: the trigger may retry on a later tick while the window/order
+            # still allows it; if the order ends first the trial is simply unperturbed
+            # (identifiable post hoc by the absent task.perturbation marker).
+            return
+        a, b = self.rng.sample(remaining, 2)
+        self._parts[a], self._parts[b] = self._parts[b], self._parts[a]
         self._perturbation_applied = True
         self.bus.publish("task.perturbation", {"order_id": self._order().id,
                                                "kind": "swap_parts",
                                                "swap": [a, b],
                                                "order_started_ts": self._order_start})
-        if len(remaining) >= 2:
-            self._emit_step()
+        self._emit_step()
 
     def _complete_order(self, timed_out: bool):
         order = self._order()

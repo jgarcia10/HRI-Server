@@ -95,3 +95,45 @@ def test_part_placed_before_start_is_ignored():
     eng, events, _ = make()
     eng.mark_part_placed()      # no crash, no events
     assert eng.state()["phase"] == "idle"
+
+
+def test_perturbation_skipped_when_fewer_than_two_parts_remain():
+    eng, events, clock = make()
+    eng.start_block()
+    for _ in range(5):
+        finish_order(eng)
+        if eng.state()["phase"] == "between_orders":
+            eng.next_order()
+    st = eng.state()
+    assert st["order_id"] == "O6" and st["kind"] == "perturbed"
+    n_parts = st["n_parts"]
+    for _ in range(n_parts - 1):            # place all but the last part
+        eng.mark_part_placed()
+    assert eng.state()["step_index"] == n_parts - 1
+
+    # Push well past the latest possible perturbation instant (window is [0.33, 0.66]
+    # of the 180s time limit, so <=118.8s) but still inside the order (<180s); tick a
+    # few times to exercise the retry path.
+    clock.t += 130
+    for _ in range(3):
+        eng.tick()
+    assert eng.state()["perturbation_applied"] is False
+    assert not [d for t, d in events if t == "task.perturbation"]
+
+    eng.mark_part_placed()                  # finish the order (and the block)
+    assert eng.state()["phase"] == "done"
+    assert eng.state()["perturbation_applied"] is False
+    assert not [d for t, d in events if t == "task.perturbation"]
+
+
+def test_tick_reemits_state_outside_running():
+    eng, events, clock = make()
+    eng.start_block()
+    finish_order(eng)                       # completes O1 -> between_orders
+    assert eng.state()["phase"] == "between_orders"
+    n_before = topics(events).count("task.state")
+    eng.tick()
+    n_after = topics(events).count("task.state")
+    assert n_after == n_before + 1
+    last_state = [d for t, d in events if t == "task.state"][-1]
+    assert last_state["phase"] == "between_orders"
