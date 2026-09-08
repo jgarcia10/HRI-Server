@@ -30,6 +30,7 @@ def test_recorded_topics_set():
         "rgb.blink", "thermal.temps", "model.estimates",
         "task.countdown", "task.step", "task.order_started",
         "task.part_placed", "task.perturbation",
-        "wizard.reposition", "wizard.speech",
+        "wizard.reposition", "wizard.speech", "wizard.request_part",
         "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
+        "supply.decision",
     }
