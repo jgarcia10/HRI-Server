@@ -16,7 +16,7 @@ from .frames import FrameStore
 # and are served via MJPEG instead — never JSON.
 STREAM_TOPICS = {
     "shimmer.gsr", "shimmer.ppg", "thermal.temps", "rgb.blink",
-    "ppg.hr", "ppg.hrv", "model.estimates", "task.state",
+    "ppg.hr", "ppg.hrv", "model.estimates", "task.state", "robot.state",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15

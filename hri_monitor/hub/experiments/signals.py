@@ -6,6 +6,7 @@ RECORDED_TOPICS = {
     "task.countdown", "task.step", "task.order_started",
     "task.part_placed", "task.perturbation",
     "wizard.reposition", "wizard.speech",
+    "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
 }
 _THERMAL_ROIS = ("forehead", "left_cheek", "right_cheek", "nose")
 
@@ -32,5 +33,9 @@ def sample_rows(topic: str, data: dict) -> list[tuple[str, float]]:
     if topic == "task.order_started":
         return [("task.order_index", float(data["order_index"]))]
     if topic in ("task.part_placed", "task.perturbation", "wizard.reposition", "wizard.speech"):
+        return [(topic, 1.0)]
+    if topic == "robot.skill_done":
+        return [("robot.skill_duration_s", float(data["duration_s"]))]
+    if topic in ("robot.part_staged", "robot.skill_failed", "robot.estop"):
         return [(topic, 1.0)]
     return []
