@@ -1,4 +1,5 @@
 import random
+import threading
 import time
 
 from hub.bus import MessageBus
@@ -88,3 +89,47 @@ def test_signals_mapping():
     assert sample_rows("robot.part_staged", {"part_id": "x", "depot_slot": "RD1", "slot": "L", "job_id": "j"}) == \
         [("robot.part_staged", 1.0)]
     assert sample_rows("robot.state", {"connected": True}) == []
+
+
+def test_wait_idle_not_true_while_job_claimed():
+    """wait_idle must return False while a job is claimed, even if queue is empty."""
+    class BlockingHome(SimBackend):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._gate = threading.Event()
+        def home(self):
+            self._gate.wait(1.0)
+
+    bus = MessageBus(); ev = []
+    bus.subscribe("*", lambda m: ev.append((m["topic"], m["data"])))
+    backend = BlockingHome(timing={"home": 0.01, "pick": 0.01, "place": 0.01, "open_gripper": 0.01,
+                                   "noise_std": 0.0}, rng=random.Random(0))
+    bridge = RobotBridge(bus, backend)
+    bridge.start()
+    bridge.submit("home")
+    time.sleep(0.02)  # let worker dequeue and set _active
+    bridge.clear_queue()
+    # queue is empty but job is still running
+    assert bridge.wait_idle(0.05) is False
+    backend._gate.set()  # release the blocking home
+    assert bridge.wait_idle(1.0) is True
+    bridge.stop()
+
+
+def test_stop_then_start_processes_jobs():
+    """stop() then start() should allow the bridge to process new jobs."""
+    bridge, events, _ = make()
+    j1 = bridge.submit("home")
+    assert bridge.wait_idle(2.0)
+    done1 = [d for t, d in events if t == "robot.skill_done"]
+    assert len(done1) == 1
+    bridge.stop()
+
+    # Clear events and restart
+    events.clear()
+    bridge.start()
+    j2 = bridge.submit("home")
+    assert bridge.wait_idle(2.0)
+    done2 = [d for t, d in events if t == "robot.skill_done"]
+    assert len(done2) == 1
+    bridge.stop()
