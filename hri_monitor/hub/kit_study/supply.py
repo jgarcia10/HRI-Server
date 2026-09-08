@@ -33,7 +33,8 @@ class SupplyProfile:
 
 class SupplyController:
     _TOPICS = ("task.order_started", "task.part_placed", "task.order_completed", "task.block_completed",
-               "robot.part_staged", "robot.skill_failed", "wizard.request_part")
+               "task.step", "task.perturbation",
+               "robot.part_staged", "robot.skill_failed", "wizard.request_part", "wizard.slot_cleared")
 
     def __init__(self, bus, bridge, block: BlockSpec, profile: SupplyProfile | None = None):
         self.bus = bus
@@ -47,6 +48,10 @@ class SupplyController:
         self._inflight: dict[str, str] = {}   # part_id -> slot
         self._staged: dict[str, str] = {}     # slot -> part_id
         self._retried: set[str] = set()
+        self._failed: set[str] = set()        # terminal failures (F1)
+        self._current_part_id: str | None = None  # from task.step (F2)
+        self._blocked: dict | None = None    # blocked detection (F2)
+        self._blocked_published: bool = False  # track published state to avoid spam
         self._requests = 0
         self._active = False
 
@@ -64,20 +69,27 @@ class SupplyController:
             self.bus.unsubscribe(t, self._on_bus)
 
     def set_profile(self, **changes) -> None:
+        profile_to_set = None
         with self._lock:
-            self.profile = SupplyProfile(**{**asdict(self.profile), **changes})
-            self.bridge.submit("set_pace", level=self.profile.pace)
+            profile_to_set = SupplyProfile(**{**asdict(self.profile), **changes})
+            self.profile = profile_to_set
+        # F3: exit lock before calling bridge.submit
+        self.bridge.submit("set_pace", level=self.profile.pace)
         self._emit()
         self._replenish()
 
     def status(self) -> dict:
         with self._lock:
-            nxt = next((p.id for p in self._plan if p.id not in self._supplied and p.id not in self._inflight), None)
+            nxt = next((p.id for p in self._plan
+                       if p.id not in self._supplied and p.id not in self._inflight and p.id not in self._failed),
+                       None)
             return {"profile": asdict(self.profile),
                     "order_id": self._order.id if self._order else None,
                     "staged": dict(self._staged),
                     "inflight": list(self._inflight),
                     "supplied": sorted(self._supplied),
+                    "failed": sorted(self._failed),
+                    "blocked": self._blocked,
                     "next_part_id": nxt}
 
     # ---------------------------------------------------------------- events
@@ -90,7 +102,24 @@ class SupplyController:
                 self._order = self.block.orders[int(data["order_index"])]
                 self._plan = list(self._order.parts)
                 self._supplied.clear(); self._inflight.clear(); self._staged.clear()
-                self._retried.clear(); self._requests = 0
+                self._retried.clear(); self._failed.clear()
+                self._current_part_id = None
+                self._blocked = None; self._blocked_published = False
+                self._requests = 0
+            self._emit(); self._replenish()
+        elif topic == "task.step":
+            # F2: track current part for prioritized selection
+            with self._lock:
+                self._current_part_id = data.get("part_id")
+            self._emit(); self._replenish()
+        elif topic == "task.perturbation":
+            # F2: swap plan to stay synced with engine
+            with self._lock:
+                swap = data.get("swap")
+                if swap and len(swap) == 2:
+                    a, b = swap
+                    if 0 <= a < len(self._plan) and 0 <= b < len(self._plan):
+                        self._plan[a], self._plan[b] = self._plan[b], self._plan[a]
             self._emit(); self._replenish()
         elif topic == "task.part_placed":
             with self._lock:
@@ -100,7 +129,7 @@ class SupplyController:
             self._emit(); self._replenish()
         elif topic in ("task.order_completed", "task.block_completed"):
             with self._lock:
-                self._plan = []; self._inflight.clear()
+                self._plan = []; self._inflight.clear(); self._blocked = None; self._blocked_published = False
             self._emit()
         elif topic == "robot.part_staged":
             with self._lock:
@@ -111,21 +140,40 @@ class SupplyController:
                 self._supplied.add(pid)
             self._emit(); self._replenish()
         elif topic == "robot.skill_failed":
-            retry = False
             pid = (data.get("args") or {}).get("part_id")
             with self._lock:
                 if pid and pid in self._inflight:
                     del self._inflight[pid]
-                    retry = pid not in self._retried and not data.get("protective_stop")
-                    if retry:
+                    protective_stop = data.get("protective_stop")
+                    if protective_stop:
+                        # F1+F4: protective stop → terminal failure
+                        self._failed.add(pid)
+                    elif pid not in self._retried:
+                        # F1+F4: first failure → mark retried and retry
                         self._retried.add(pid)
+                    else:
+                        # F1+F4: second failure → terminal
+                        self._failed.add(pid)
+                self._blocked = None; self._blocked_published = False
             self._emit()
-            if pid and retry:
-                self._replenish()
+            # Always replenish to handle retry or blocked detection
+            self._replenish()
         elif topic == "wizard.request_part":
             with self._lock:
                 self._requests += 1
+                # F5: if current part is failed, clear it for retry
+                if self._current_part_id and self._current_part_id in self._failed:
+                    self._failed.discard(self._current_part_id)
+                    self._retried.discard(self._current_part_id)
             self._replenish(on_request=True)
+        elif topic == "wizard.slot_cleared":
+            # F2: experimenter physically removed part from slot
+            slot = data.get("slot")
+            with self._lock:
+                if slot and slot in self._staged:
+                    del self._staged[slot]
+                self._blocked = None; self._blocked_published = False
+            self._emit(); self._replenish()
 
     # --------------------------------------------------------------- policy
     def _free_slot(self) -> str | None:
@@ -143,20 +191,80 @@ class SupplyController:
             budget = self.profile.lookahead
             if budget == 0:
                 budget = 1 if (on_request or self._requests > len(self._supplied) + len(self._inflight)) else 0
+
+            # F5: on_request from recovery, prioritize current part even if at budget
+            if on_request and self._current_part_id:
+                for p in self._plan:
+                    if p.id == self._current_part_id:
+                        if (p.id not in self._supplied and p.id not in self._inflight and p.id not in self._failed):
+                            slot = self._free_slot()
+                            if slot is not None:
+                                self._inflight[p.id] = slot
+                                decisions.append((p, slot, "recovery"))
+                                ahead += 1
+                        break
+
             while ahead < budget:
-                part = next((p for p in self._plan
-                             if p.id not in self._supplied and p.id not in self._inflight), None)
+                # F1+F3: selection excludes failed parts
+                # F2: prioritize current part if it's a candidate
+                current_candidate = None
+                if self._current_part_id:
+                    for p in self._plan:
+                        if p.id == self._current_part_id:
+                            if (p.id not in self._supplied and p.id not in self._inflight and p.id not in self._failed):
+                                current_candidate = p
+                            break
+
+                if current_candidate:
+                    part = current_candidate
+                else:
+                    part = next((p for p in self._plan
+                                 if p.id not in self._supplied and p.id not in self._inflight and p.id not in self._failed),
+                                None)
+
                 slot = self._free_slot()
                 if part is None or slot is None:
                     break
                 self._inflight[part.id] = slot
                 decisions.append((part, slot, "request" if on_request else f"lookahead={self.profile.lookahead}"))
                 ahead += 1
+
+            # F6: blocked detection
+            was_blocked = self._blocked is not None
+            new_blocked = None
+            if self._current_part_id:
+                in_staged = any(pid == self._current_part_id for pid in self._staged.values())
+                in_inflight = self._current_part_id in self._inflight
+                in_failed = self._current_part_id in self._failed
+                free_slot = self._free_slot()
+
+                if not in_staged and not in_inflight:
+                    if free_slot is None and not in_failed:
+                        # mat_full: current part not staged/inflight, no free slots, not failed yet
+                        new_blocked = {"reason": "mat_full", "needed": self._current_part_id, "staged": dict(self._staged)}
+                    elif in_failed:
+                        # part_failed: current part is terminal failure
+                        new_blocked = {"reason": "part_failed", "needed": self._current_part_id, "staged": dict(self._staged)}
+
+            self._blocked = new_blocked
+
+        # Publish decisions
         for part, slot, reason in decisions:
             self.bus.publish("supply.decision", {"part_id": part.id, "slot": slot, "reason": reason})
             self.bridge.supply(part.id, part.depot_slot, slot)
         if decisions:
             self._emit()
+
+        # F6: publish blocked event (once per transition, no spam)
+        with self._lock:
+            is_blocked = self._blocked is not None
+            if is_blocked and not self._blocked_published:
+                # Transition to blocked: publish
+                self.bus.publish("supply.blocked", self._blocked)
+                self._blocked_published = True
+            elif not is_blocked and self._blocked_published:
+                # Transition to unblocked
+                self._blocked_published = False
 
     def _emit(self) -> None:
         self.bus.publish("supply.state", self.status())
