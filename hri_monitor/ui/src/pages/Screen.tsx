@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { useKitWs, type KitTaskState } from "../lib/kit";
 
 const BRICK: Record<string, string> = {
-  red: "#d64541", blue: "#2e86de", green: "#27ae60", yellow: "#f1c40f",
+  red: "#d64541", orange: "#e67e22", blue: "#2e86de", seafoam: "#7fd6c2", lime: "#a3cb38",
 };
-const WIDTH: Record<string, number> = { "2x2": 90, "2x3": 130, "2x4": 170, L: 120 };
+const WIDTH: Record<string, number> = { "1x2": 170, "1x1": 90, slope: 120 };
 
 function Diagram({ task }: { task: KitTaskState }) {
   // Column of bricks, bottom-up = assembly sequence. Done = solid, current = pulsing

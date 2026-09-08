@@ -1,64 +1,179 @@
 family: F1
 orders:
-  - id: O1
-    kind: easy
-    time_limit_s: null
-    parts:
-      - {id: O1P1, type: 2x4, color: red,    depot_slot: R1}
-      - {id: O1P2, type: 2x2, color: blue,   depot_slot: B1}
-      - {id: O1P3, type: 2x4, color: green,  depot_slot: G1}
-      - {id: O1P4, type: 2x2, color: yellow, depot_slot: Y1}
-  - id: O2
-    kind: easy
-    time_limit_s: null
-    parts:
-      - {id: O2P1, type: 2x4, color: blue,   depot_slot: B2}
-      - {id: O2P2, type: 2x2, color: red,    depot_slot: R2}
-      - {id: O2P3, type: L,   color: yellow, depot_slot: Y2}
-      - {id: O2P4, type: 2x2, color: green,  depot_slot: G2}
-      - {id: O2P5, type: 2x4, color: red,    depot_slot: R3}
-  - id: O3
-    kind: rush
-    time_limit_s: 150
-    parts:
-      - {id: O3P1, type: 2x4, color: red,    depot_slot: R4}
-      - {id: O3P2, type: 2x3, color: red,    depot_slot: R5}
-      - {id: O3P3, type: 2x2, color: blue,   depot_slot: B3}
-      - {id: O3P4, type: 2x4, color: blue,   depot_slot: B4}
-      - {id: O3P5, type: 2x3, color: blue,   depot_slot: B5}
-      - {id: O3P6, type: L,   color: green,  depot_slot: G3}
-      - {id: O3P7, type: 2x2, color: green,  depot_slot: G4}
-      - {id: O3P8, type: 2x4, color: yellow, depot_slot: Y3}
-      - {id: O3P9, type: 2x3, color: yellow, depot_slot: Y4}
-  - id: O4
-    kind: easy
-    time_limit_s: null
-    parts:
-      - {id: O4P1, type: 2x2, color: yellow, depot_slot: Y5}
-      - {id: O4P2, type: 2x4, color: green,  depot_slot: G5}
-      - {id: O4P3, type: 2x2, color: red,    depot_slot: R6}
-      - {id: O4P4, type: 2x4, color: blue,   depot_slot: B6}
-  - id: O5
-    kind: rush_prime          # same structure as O3, colors permuted (mirror)
-    time_limit_s: 150
-    parts:
-      - {id: O5P1, type: 2x4, color: yellow, depot_slot: Y6}
-      - {id: O5P2, type: 2x3, color: yellow, depot_slot: Y7}
-      - {id: O5P3, type: 2x2, color: green,  depot_slot: G6}
-      - {id: O5P4, type: 2x4, color: green,  depot_slot: G7}
-      - {id: O5P5, type: 2x3, color: green,  depot_slot: G8}
-      - {id: O5P6, type: L,   color: red,    depot_slot: R7}
-      - {id: O5P7, type: 2x2, color: red,    depot_slot: R8}
-      - {id: O5P8, type: 2x4, color: blue,   depot_slot: B7}
-      - {id: O5P9, type: 2x3, color: blue,   depot_slot: B8}
-  - id: O6
-    kind: perturbed
-    time_limit_s: 180
-    perturbation: {window: [0.33, 0.66], kind: swap_parts}
-    parts:
-      - {id: O6P1, type: 2x4, color: red,    depot_slot: R1}
-      - {id: O6P2, type: 2x2, color: blue,   depot_slot: B1}
-      - {id: O6P3, type: 2x3, color: green,  depot_slot: G1}
-      - {id: O6P4, type: L,   color: yellow, depot_slot: Y1}
-      - {id: O6P5, type: 2x4, color: blue,   depot_slot: B2}
-      - {id: O6P6, type: 2x2, color: green,  depot_slot: G2}
+- id: O1
+  kind: easy
+  time_limit_s: null
+  parts:
+  - id: F1O1P1
+    type: 1x2
+    color: blue
+    depot_slot: BL1
+  - id: F1O1P2
+    type: 1x2
+    color: red
+    depot_slot: RD1
+  - id: F1O1P3
+    type: 1x1
+    color: lime
+    depot_slot: LM1
+  - id: F1O1P4
+    type: slope
+    color: orange
+    depot_slot: OR1
+- id: O2
+  kind: easy
+  time_limit_s: null
+  parts:
+  - id: F1O2P1
+    type: 1x2
+    color: seafoam
+    depot_slot: SF1
+  - id: F1O2P2
+    type: 1x2
+    color: blue
+    depot_slot: BL1
+  - id: F1O2P3
+    type: 1x2
+    color: red
+    depot_slot: RD1
+  - id: F1O2P4
+    type: 1x1
+    color: orange
+    depot_slot: OR1
+  - id: F1O2P5
+    type: slope
+    color: blue
+    depot_slot: BL2
+- id: O3
+  kind: rush
+  time_limit_s: 150
+  parts:
+  - id: F1O3P1
+    type: 1x2
+    color: red
+    depot_slot: RD1
+  - id: F1O3P2
+    type: 1x2
+    color: orange
+    depot_slot: OR1
+  - id: F1O3P3
+    type: 1x2
+    color: seafoam
+    depot_slot: SF1
+  - id: F1O3P4
+    type: 1x1
+    color: lime
+    depot_slot: LM1
+  - id: F1O3P5
+    type: 1x1
+    color: seafoam
+    depot_slot: SF2
+  - id: F1O3P6
+    type: 1x2
+    color: blue
+    depot_slot: BL1
+  - id: F1O3P7
+    type: slope
+    color: red
+    depot_slot: RD2
+  - id: F1O3P8
+    type: slope
+    color: red
+    depot_slot: RD3
+  - id: F1O3P9
+    type: 1x1
+    color: orange
+    depot_slot: OR2
+- id: O4
+  kind: easy
+  time_limit_s: null
+  parts:
+  - id: F1O4P1
+    type: 1x2
+    color: lime
+    depot_slot: LM1
+  - id: F1O4P2
+    type: 1x1
+    color: red
+    depot_slot: RD1
+  - id: F1O4P3
+    type: 1x2
+    color: blue
+    depot_slot: BL1
+  - id: F1O4P4
+    type: 1x1
+    color: orange
+    depot_slot: OR1
+- id: O5
+  kind: rush_prime
+  time_limit_s: 150
+  parts:
+  - id: F1O5P1
+    type: 1x2
+    color: orange
+    depot_slot: OR1
+  - id: F1O5P2
+    type: 1x2
+    color: red
+    depot_slot: RD1
+  - id: F1O5P3
+    type: 1x2
+    color: lime
+    depot_slot: LM1
+  - id: F1O5P4
+    type: 1x1
+    color: seafoam
+    depot_slot: SF1
+  - id: F1O5P5
+    type: 1x1
+    color: lime
+    depot_slot: LM2
+  - id: F1O5P6
+    type: 1x2
+    color: blue
+    depot_slot: BL1
+  - id: F1O5P7
+    type: slope
+    color: orange
+    depot_slot: OR2
+  - id: F1O5P8
+    type: slope
+    color: orange
+    depot_slot: OR3
+  - id: F1O5P9
+    type: 1x1
+    color: red
+    depot_slot: RD2
+- id: O6
+  kind: perturbed
+  time_limit_s: 180
+  parts:
+  - id: F1O6P1
+    type: 1x2
+    color: red
+    depot_slot: RD1
+  - id: F1O6P2
+    type: 1x2
+    color: orange
+    depot_slot: OR1
+  - id: F1O6P3
+    type: 1x2
+    color: blue
+    depot_slot: BL1
+  - id: F1O6P4
+    type: 1x1
+    color: seafoam
+    depot_slot: SF1
+  - id: F1O6P5
+    type: slope
+    color: lime
+    depot_slot: LM1
+  - id: F1O6P6
+    type: 1x1
+    color: blue
+    depot_slot: BL2
+  perturbation:
+    window:
+    - 0.33
+    - 0.66
+    kind: swap_parts
