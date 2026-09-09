@@ -1,0 +1,5 @@
+provider: mock          # mock | openai   (set openai + export OPENAI_API_KEY for real runs)
+model: gpt-5-mini
+mission: "Supply the participant with the right kit parts at the right time so they can assemble each kit quickly and accurately, adapting to how this person likes to be assisted."
+judge_every: 2
+history: 6

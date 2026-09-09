@@ -8,6 +8,7 @@ RECORDED_TOPICS = {
     "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared",
     "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
     "supply.decision", "supply.blocked",
+    "anima.perception", "anima.verdict",
 }
 _THERMAL_ROIS = ("forehead", "left_cheek", "right_cheek", "nose")
 
@@ -39,4 +40,14 @@ def sample_rows(topic: str, data: dict) -> list[tuple[str, float]]:
         return [("robot.skill_duration_s", float(data["duration_s"]))]
     if topic in ("robot.part_staged", "robot.skill_failed", "robot.estop"):
         return [(topic, 1.0)]
+    if topic == "anima.perception":
+        rows = [(f"anima.{n}_pull", float(data[f"{n}_pull"])) for n in
+                ("relatedness", "competence", "autonomy", "resource") if f"{n}_pull" in data]
+        rows.append(("anima.intensity", float(data["intensity"])))
+        regimes = ("supportive", "adversarial", "exploratory")
+        if data.get("regime") in regimes:
+            rows.append(("anima.regime_idx", float(regimes.index(data["regime"]))))
+        return rows
+    if topic == "anima.verdict":
+        return [("anima.g", float(data["g"]))]
     return []

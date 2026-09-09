@@ -17,6 +17,7 @@ from .frames import FrameStore
 STREAM_TOPICS = {
     "shimmer.gsr", "shimmer.ppg", "thermal.temps", "rgb.blink",
     "ppg.hr", "ppg.hrv", "model.estimates", "task.state", "robot.state", "supply.state",
+    "anima.perception", "anima.verdict",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
@@ -46,6 +47,17 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         app.include_router(build_kit_router(kit_session, bus, bridge))
         app.state.kit_session = kit_session
         app.state.robot_bridge = bridge
+
+        from .kit_study.anima_llm import AnimaLLM
+        from anima.llm.backend import make_backend
+        import yaml as _yaml
+        llm_cfg = _yaml.safe_load((Path(__file__).parent / "kit_study" / "configs" / "llm.yaml").read_text())
+        anima_llm = AnimaLLM(bus, make_backend(provider=llm_cfg.get("provider", "mock"), model=llm_cfg.get("model")),
+                             mission=llm_cfg["mission"], judge_every=int(llm_cfg.get("judge_every", 2)),
+                             history=int(llm_cfg.get("history", 6)))
+        anima_llm.start()
+        app.state.anima_llm = anima_llm
+        kit_session.anima_llm = anima_llm
 
     @app.get("/api/status")
     def status():

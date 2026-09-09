@@ -33,4 +33,5 @@ def test_recorded_topics_set():
         "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared",
         "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
         "supply.decision", "supply.blocked",
+        "anima.perception", "anima.verdict",
     }

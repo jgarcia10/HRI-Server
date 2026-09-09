@@ -47,6 +47,7 @@ class KitSession:
         self.default_profile = default_profile
         self.supply = None
         self.engine: TaskEngine | None = None
+        self.anima_llm = None
         self._info = None
         self._ticker = None
         self._stop_evt = threading.Event()
@@ -65,6 +66,8 @@ class KitSession:
         part_id = self._ensure_participant(exp_id, participant_code)
         rec = self.controller.start(condition_id=cond_id, experiment_id=exp_id,
                                     participant_id=part_id)
+        if self.anima_llm:
+            self.anima_llm.reset()
         try:
             self.bus.subscribe("*", self._on_bus)
             self.engine = TaskEngine(self.bus, spec, now=self.now, rng=random.Random())
@@ -120,7 +123,8 @@ class KitSession:
         if self._info is None:
             return None
         return {**self._info, "task": self.engine.state(),
-                "supply": self.supply.status() if self.supply else None}
+                "supply": self.supply.status() if self.supply else None,
+                "anima": self.anima_llm.status() if self.anima_llm else None}
 
     # --------------------------------------------------------------- private
     def _tick_loop(self):
