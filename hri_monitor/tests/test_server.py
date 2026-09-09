@@ -124,8 +124,11 @@ def _kit_app(tmp_path, robot_timing=None):
 def test_shutdown_stops_robot_bridge_and_anima_llm_when_idle(tmp_path):
     app = _kit_app(tmp_path)
     bridge, anima_llm = app.state.robot_bridge, app.state.anima_llm
+    session = app.state.kit_session
     calls = []
     orig_estop, orig_bridge_stop, orig_llm_stop = bridge.estop, bridge.stop, anima_llm.stop
+    orig_session_stop = session.stop
+    session.stop = lambda: (calls.append("session.stop"), orig_session_stop())[-1]
     bridge.estop = lambda: (calls.append("estop"), orig_estop())[-1]
     bridge.stop = lambda: (calls.append("bridge.stop"), orig_bridge_stop())[-1]
     anima_llm.stop = lambda: (calls.append("anima_llm.stop"), orig_llm_stop())[-1]
@@ -134,7 +137,22 @@ def test_shutdown_stops_robot_bridge_and_anima_llm_when_idle(tmp_path):
         pass  # nothing running: the bridge sits idle
 
     assert "estop" not in calls  # nothing was mid-motion, so no estop needed
-    assert calls == ["bridge.stop", "anima_llm.stop"]  # bridge torn down before the LLM worker
+    # session first (it unsubscribes supply so nothing re-submits), then the bridge, then LLM
+    assert calls == ["session.stop", "bridge.stop", "anima_llm.stop"]
+
+
+def test_shutdown_stops_a_running_kit_session(tmp_path):
+    """A Ctrl-C mid-block must close the recording, not leave it dangling."""
+    app = _kit_app(tmp_path)
+    session, ctrl = app.state.kit_session, app.state.recording_controller
+    with TestClient(app) as client:
+        r = client.post("/api/kit/session/start",
+                        json={"participant_code": "P99", "condition": "C0"})
+        assert r.status_code == 200, r.text
+        assert session.status() is not None
+        assert ctrl.status() is not None
+    assert session.status() is None      # torn down by the lifespan shutdown
+    assert ctrl.status() is None         # ... and the recording was closed
 
 
 def test_shutdown_estops_when_a_skill_is_in_flight(tmp_path):

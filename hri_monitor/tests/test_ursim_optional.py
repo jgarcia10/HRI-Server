@@ -10,11 +10,15 @@ import pytest
 pytestmark = pytest.mark.skipif(not os.environ.get("URSIM_IP"), reason="set URSIM_IP to run")
 
 
+def _calibration():
+    from hub.kit_study.robotd.ur import load_calibration
+    return load_calibration("hub/kit_study/configs/calibration.example.yaml")
+
+
 def _backend(**kw):
-    from hub.kit_study.robotd.ur import URBackend, load_calibration
-    cal = load_calibration("hub/kit_study/configs/calibration.example.yaml")
+    from hub.kit_study.robotd.ur import URBackend
     kw.setdefault("gripper_settle_s", 0.2)
-    return URBackend(os.environ["URSIM_IP"], cal, **kw)
+    return URBackend(os.environ["URSIM_IP"], _calibration(), **kw)
 
 
 def test_connect_home_and_gripper():
@@ -36,9 +40,15 @@ def test_stop_interrupts_home_and_home_resumes():
     from hub.kit_study.robotd.base import Aborted
 
     b = _backend()
+    cal = _calibration()
     b.connect()
     try:
         b.home()                      # start from a known pose
+        # Park far from home (staging L is ~2.5 rad away): homing *from* the home pose is a
+        # zero-length move that finishes before stop() can land, so the abort would never be
+        # exercised. These two are synchronous helper moves, not URBackend skills.
+        b.ctrl.moveJ(cal["transit"]["q"], 0.6, 0.8)
+        b.ctrl.moveJ(cal["staging"]["L"]["q"], 0.6, 0.8)
         b.set_pace("slow")            # more time to catch the move mid-flight
         result = {}
 

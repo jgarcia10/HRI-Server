@@ -5,7 +5,7 @@ import time
 from hub.bus import MessageBus
 from hub.experiments.signals import RECORDED_TOPICS, sample_rows
 from hub.kit_study.robot_bridge import RobotBridge
-from hub.kit_study.robotd.base import ProtectiveStop
+from hub.kit_study.robotd.base import EmergencyStop, ProtectiveStop, RobotError, RobotFault
 from hub.kit_study.robotd.sim import SimBackend
 
 
@@ -236,13 +236,144 @@ def test_wait_idle_not_true_while_job_claimed():
                                    "noise_std": 0.0}, rng=random.Random(0))
     bridge = RobotBridge(bus, backend)
     bridge.start()
+    started = threading.Event()
+    bus.subscribe("robot.skill_started", lambda m: started.set())
     bridge.submit("home")
-    time.sleep(0.02)  # let worker dequeue and set _active
+    assert started.wait(2.0), "worker never dequeued the job"
     bridge.clear_queue()
     # queue is empty but job is still running
     assert bridge.wait_idle(0.05) is False
     backend._gate.set()  # release the blocking home
     assert bridge.wait_idle(1.0) is True
+    bridge.stop()
+
+
+def test_set_pace_is_admitted_through_the_latch():
+    """N1: set_pace commands no motion, so a profile change must survive a latch — otherwise
+    the robot runs at `normal` while the profile/CSV say `slow`."""
+    bridge, events, backend = make()
+    bridge.estop()
+    assert bridge.latched() == "estop"
+
+    events.clear()
+    assert bridge.submit("set_pace", level="slow") is not None
+    assert bridge.wait_idle(2.0)
+    assert backend.state().pace == "slow"
+    assert "robot.rejected" not in topics(events)
+    # everything that *does* move is still refused
+    assert bridge.supply("F1O1P1", "BL1", "L") is None
+    assert bridge.latched() == "estop"
+    bridge.stop()
+
+
+def test_robot_fault_latches_like_a_protective_stop():
+    """N2: a refused/failed move is a robot fault — latch, don't blame the part."""
+    class Broken(SimBackend):
+        def pick(self, depot_slot):
+            raise RobotFault("moveJ refused")
+
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    bridge = RobotBridge(bus, Broken(rng=random.Random(0)), monitor_interval=5.0)
+    bridge.start()
+    bridge.supply("P", "RD1", "C")
+    assert bridge.wait_idle(2.0)
+    assert bridge.latched() == "robot_fault"
+    failed = [d for t, d in events if t == "robot.skill_failed"]
+    assert len(failed) == 1
+    assert failed[0]["robot_fault"] is True and failed[0]["protective_stop"] is False
+    assert failed[0]["safety"] == "robot_fault"
+    estops = [d for t, d in events if t == "robot.estop"]
+    assert estops[-1]["reason"] == "robot_fault" and estops[-1]["source"] == "backend"
+    assert estops[-1]["error"] == "moveJ refused"
+    assert bridge.supply("P2", "RD2", "L") is None
+    bridge.stop()
+
+
+def test_failure_while_disconnected_is_a_robot_fault():
+    """N2(a): even a plain RobotError counts as a robot fault when the backend is down."""
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    backend = SimBackend(timing={"home": 0.01, "pick": 0.01, "place": 0.01,
+                                 "open_gripper": 0.01, "noise_std": 0.0}, rng=random.Random(0))
+    bridge = RobotBridge(bus, backend, monitor_interval=5.0)
+    bridge.start()
+    backend.disconnect()                     # SimBackend._run raises RobotError("not connected")
+    bridge.supply("P", "RD1", "C")
+    assert bridge.wait_idle(2.0)
+    failed = [d for t, d in events if t == "robot.skill_failed"]
+    assert failed and failed[-1]["robot_fault"] is True
+    assert bridge.latched() == "robot_fault"
+    bridge.stop()
+
+
+def test_emergency_stop_and_protective_stop_map_to_different_reasons():
+    """N3: PolyScope needs a reset for one and a re-power for the other."""
+    def run(exc):
+        class Backend(SimBackend):
+            def pick(self, depot_slot):
+                raise exc
+        bus = MessageBus(); events = []
+        bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+        bridge = RobotBridge(bus, Backend(rng=random.Random(0)), monitor_interval=5.0)
+        bridge.start()
+        bridge.supply("P", "RD1", "C")
+        assert bridge.wait_idle(2.0)
+        out = (bridge.latched(),
+               [d for t, d in events if t == "robot.skill_failed"][-1],
+               [d for t, d in events if t == "robot.estop"][-1])
+        bridge.stop()
+        return out
+
+    latched, failed, estop = run(EmergencyStop("e-stop"))
+    assert latched == "emergency_stop" and failed["safety"] == "emergency_stop"
+    assert failed["protective_stop"] is True and failed["robot_fault"] is False
+    assert estop == {"reason": "emergency_stop", "source": "backend"}
+
+    latched, failed, estop = run(ProtectiveStop("protective stop"))
+    assert latched == "protective_stop" and failed["safety"] == "protective_stop"
+    assert estop == {"reason": "protective_stop", "source": "backend"}
+
+
+def test_grasp_miss_is_not_a_robot_fault():
+    class Miss(SimBackend):
+        def pick(self, depot_slot):
+            raise RobotError("simulated grasp failure")
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    bridge = RobotBridge(bus, Miss(rng=random.Random(0)), monitor_interval=5.0)
+    bridge.start()
+    bridge.supply("P", "RD1", "C")
+    assert bridge.wait_idle(2.0)
+    failed = [d for t, d in events if t == "robot.skill_failed"]
+    assert failed[-1]["robot_fault"] is False and failed[-1]["safety"] is None
+    assert bridge.latched() is None
+    bridge.stop()
+
+
+def test_estop_latches_before_it_clears_the_queue():
+    """A submit racing STOP must be rejected, not land in the queue behind the drain."""
+    box = {}
+
+    class Racer(SimBackend):
+        def stop(self):
+            # runs from inside estop(), after clear_queue(): the latch must already hold
+            box["job"] = bridge.submit("open_gripper")
+            box["latched"] = bridge.latched()
+            box["queue"] = bridge.queue_size()
+            super().stop()
+
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    backend = Racer(timing={"home": 0.01, "pick": 0.01, "place": 0.01, "open_gripper": 0.01,
+                            "noise_std": 0.0}, rng=random.Random(0))
+    bridge = RobotBridge(bus, backend, monitor_interval=5.0)
+    bridge.start()
+    bridge.estop()
+    assert box["latched"] == "estop"
+    assert box["job"] is None and box["queue"] == 0
+    assert bridge.queue_size() == 0
+    assert [d for t, d in events if t == "robot.rejected"]
     bridge.stop()
 
 

@@ -15,11 +15,23 @@ All commands run from `hri_monitor/` unless noted. `run.py` takes `--mode sim|ro
   "Part placed" as the participant would → change look-ahead/side/pace live from the wizard →
   "STOP robot" is available at any time (`POST /api/kit/robot/stop`, clears the queue and
   e-stops the backend) and remains **one click, no confirmation dialog**.
-- STOP **latches** the robot (`robot.state.latched = "estop"`): every skill except `home` is
-  rejected (`robot.rejected`) and supply pauses (`supply.state.blocked.reason = "estop"`) until
-  the wizard presses **Home**, which clears the latch (`robot.resumed`) and lets supply resume.
-  The UI shows a red "LATCHED: estop — press Home to resume" banner on the robot card while
-  this holds; there is no other way to clear it.
+- STOP **latches** the robot (`robot.state.latched = "estop"`): every skill except `home` and
+  `set_pace` is rejected (`robot.rejected`) and supply pauses
+  (`supply.state.blocked.reason = "estop"`) until the wizard presses **Home**, which clears the
+  latch (`robot.resumed`) and lets supply resume. The UI shows a red "LATCHED: … " banner on
+  the robot card while this holds (plus "· supply paused"); there is no other way to clear it.
+  A pace change made while latched *does* reach the robot (`set_pace` moves nothing), and is
+  re-sent once on resume, so the robot never runs at the wrong speed after a stop.
+- Four latch reasons, each with its own banner copy and recovery:
+  - `estop` — the wizard pressed STOP → **Home**.
+  - `protective_stop` — PolyScope protective stop → reset in PolyScope, then **Home**.
+  - `emergency_stop` — the hardware E-stop button is pressed → "E-stop pressed — release it,
+    re-power in PolyScope, then Home".
+  - `robot_fault` — "robot refused/failed to move — check connection and PolyScope mode, then
+    Home". Raised when the arm is not connected, a `moveJ`/`moveL` is refused, a move times out
+    or the target is not reached, and by a circuit breaker after two supply failures in a row
+    on *different* parts. The in-flight part is **not** marked failed; supply pauses instead of
+    walking the whole order into `failed`.
 - At every order transition: remove any leftover bricks from the shared mat, then press
   **Mat cleared** (`POST /api/kit/event {"type": "mat_cleared"}`) so every staged slot is
   considered free again — do this before the next order's supply starts staging into a slot
@@ -101,6 +113,14 @@ robot` refuses this shortcut (see section C.4).
         resumes automatically with the *same* part it was staging — no re-queue needed.
       - Confirm no `part_failed` was recorded for that part and the CSV has a `blocked` marker
         around the drill.
+
+    **Robot-fault drill** (same session, 30 s): take the UR5 out of Remote Control in
+    PolyScope (or unplug the Ethernet cable) while supply is staging.
+      - App shows `robot.state.latched = "robot_fault"` and
+        `supply.state.blocked.reason = "robot_fault"` after a *single* `robot.skill_failed` —
+        no part is marked failed and no further skill is submitted.
+      - Restore Remote Control / the cable, press **Reconnect** if the card still shows
+        disconnected, then **Home**; supply resumes with the same part.
  6. Sensors: Shimmer → Devices page (bind rfcomm, connect); Optris → status connected
     (`Formats.def` now present in `/usr/share/libirimager`); webcam index in `config.yaml`.
 

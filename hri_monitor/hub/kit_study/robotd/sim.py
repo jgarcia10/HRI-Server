@@ -85,8 +85,10 @@ class SimBackend(RobotBackend):
         self._pace = validate_pace(level)
 
     def stop(self) -> None:
+        """Latch the abort. `_busy` is owned by the running skill and cleared when it
+        unwinds (same contract as `URBackend.stop`) — clearing it here would report the
+        robot as idle while a motion is still finishing."""
         self._abort.set()
-        self._busy = False
 
     def state(self) -> RobotState:
         return RobotState(connected=self._connected, backend=self.name, busy=self._busy,

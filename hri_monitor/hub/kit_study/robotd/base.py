@@ -12,11 +12,27 @@ _DEPOT_SLOT = re.compile(r"^[A-Z]{2}\d{1,2}$")   # RD1, OR3, BL12 …
 
 
 class RobotError(Exception):
-    """A skill failed (grasp miss, unreachable, comms)."""
+    """A skill failed for a reason that is *specific to this attempt* — a grasp miss, a
+    gripper command the tool refused, an IK solution off the taught branch. Retrying the
+    same part (once) is a sensible response."""
+
+
+class RobotFault(RobotError):
+    """The robot refused or failed to *move at all*: not connected, moveJ/moveL refused,
+    move timeout, target not reached.
+
+    N2: these are not grasp failures — the next part would fail identically, so the whole
+    remaining order would go terminal within milliseconds. The bridge latches on them and
+    supply pauses exactly as it does for a protective stop."""
 
 
 class ProtectiveStop(RobotError):
-    """The controller entered protective/emergency stop; motion is refused until reset."""
+    """The controller entered a protective stop; motion is refused until reset in PolyScope."""
+
+
+class EmergencyStop(ProtectiveStop):
+    """The hardware E-stop is pressed. Recovery differs from a protective stop (release the
+    button and re-power), so it is reported separately — see N3."""
 
 
 class Aborted(RobotError):

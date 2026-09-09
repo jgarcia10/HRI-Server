@@ -10,7 +10,7 @@ import threading
 import pytest
 import yaml
 
-from hub.kit_study.robotd.base import Aborted, ProtectiveStop, RobotError
+from hub.kit_study.robotd.base import Aborted, EmergencyStop, ProtectiveStop, RobotError, RobotFault
 from hub.kit_study.robotd.ur import DEFAULT_SPEEDS, GRIPPER_TOOL_DO, URBackend, load_calibration
 
 Q = [0.1, -1.5, 1.2, -1.3, -1.57, 0.0]
@@ -265,19 +265,55 @@ def test_protective_stop_after_move_completes_is_raised():
     assert b.state().busy is False
 
 
-def test_target_not_reached_raises():
+def test_emergency_stop_is_distinguished_from_a_protective_stop():
+    """N3: the recoveries differ (release + re-power vs reset), so the types differ."""
+    b, c, r, io = make()
+    r.es = True
+    with pytest.raises(EmergencyStop):
+        b.pick("RD1")
+    assert b.state().safety == "estop"
+    r.es, r.ps = False, True
+    with pytest.raises(ProtectiveStop) as exc:
+        b.pick("RD1")
+    assert not isinstance(exc.value, EmergencyStop)
+    assert c.calls == []
+
+
+def test_target_not_reached_raises_a_robot_fault():
     b, c, r, io = make(dict(CAL, home={"q": [x + 0.5 for x in Q]}), reach_grace_s=0.0)
     c.r.reach = False                      # the arm never arrives
-    with pytest.raises(RobotError, match="target not reached"):
+    with pytest.raises(RobotFault, match="target not reached"):
         b.home()
     assert [k[0] for k in c.calls] == ["moveJ"]
 
 
-def test_move_timeout():
+def test_move_timeout_is_a_robot_fault():
     b, c, r, io = make(poll_s=0.001, move_timeout_s=0.05)
     c.r.hold = True                        # the operation never finishes
-    with pytest.raises(RobotError, match="move timeout"):
+    with pytest.raises(RobotFault, match="move timeout"):
         b.home()
+
+
+def test_refused_move_and_disconnected_backend_are_robot_faults():
+    """N2: these must not be charged to the part — they would fail identically for the next
+    one, emptying the whole order into `failed`."""
+    b, c, r, io = make()
+    c.moveJ = lambda *a, **kw: False
+    with pytest.raises(RobotFault, match="moveJ refused"):
+        b.home()
+
+    b2 = URBackend("192.168.131.140", CAL)     # never connected
+    with pytest.raises(RobotFault, match="not connected"):
+        b2.home()
+
+
+def test_grasp_shaped_failures_stay_plain_robot_errors():
+    """A gripper refusal / bad IK is specific to this attempt: retryable, not a fault."""
+    b, c, r, io = make()
+    io.setToolDigitalOut = lambda out_id, level: False
+    with pytest.raises(RobotError) as exc:
+        b.pick("RD1")
+    assert not isinstance(exc.value, RobotFault)
 
 
 def test_mid_motion_protective_stop_is_classified():
@@ -432,6 +468,39 @@ def test_disconnect_closes_all_interfaces_and_latches_abort():
     assert b.stop_latched is True
     st = b.state()
     assert st.connected is False and st.safety == "disconnected"
+
+
+def test_connect_refuses_while_a_latched_skill_is_still_unwinding():
+    """`connect()` clears the stop latch, so it must never be a back door around a STOP that
+    a worker thread is still inside. Only `home` resumes."""
+    b, c, r, io = make()
+    b._busy = True                           # a skill is mid-unwind on the worker thread
+    b.stop()
+    with pytest.raises(RobotError, match="stop latched; send home first"):
+        b.connect()
+    assert b.stop_latched is True
+    assert b.ctrl is c                        # the live interfaces were left alone
+
+    # once nothing is running, a reconnect is allowed again and closes the old interfaces
+    b._busy = False
+    b.connect()
+    assert c.connected is False, "the previous control interface was leaked"
+    assert b.stop_latched is False
+
+
+def test_stop_motion_survives_a_disconnect_race():
+    """N-minor 5: `disconnect()` nulling `ctrl` mid-stop is still an abort, not an
+    AttributeError leaking out as an unclassified failure."""
+    b, c, r, io = make(poll_s=0.005)
+    c.r.hold = True
+
+    def vanish(rob):
+        if rob.polls >= 2:                   # i.e. once the move is actually running
+            b.stop()
+            b.ctrl = None                    # simulate disconnect() racing the stop
+    c.r.on_poll = vanish
+    with pytest.raises(Aborted):
+        b.home()
 
 
 def test_state_on_disconnected_backend_does_not_raise():

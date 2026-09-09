@@ -3,11 +3,14 @@
 Bus callbacks elsewhere (TaskEngine, SupplyController) call `submit()`/`supply()` — which
 only enqueue — so nobody ever blocks on robot motion inside a bus callback.
 
-Safety latch: a wizard STOP, a backend protective stop, or a safety transition seen by the
-idle monitor *latches* the bridge. While latched only `home` is accepted; every other skill
-is refused with `robot.rejected` so that nothing (SupplyController included) can put the
-robot back in motion behind the operator's back. A successful `home` clears the latch and
-publishes `robot.resumed`.
+Safety latch: a wizard STOP, a backend protective stop / E-stop, a robot fault (the arm
+refused or failed to move) or a safety transition seen by the idle monitor *latches* the
+bridge. While latched only the two skills that cannot move the arm are accepted — `home`
+(the resume path) and `set_pace` (N1: a profile change must still reach the backend, or the
+robot silently runs at the wrong speed after the latch clears). Every other skill is refused
+with `robot.rejected` so that nothing (SupplyController included) can put the robot back in
+motion behind the operator's back. A successful `home` clears the latch and publishes
+`robot.resumed`.
 """
 from __future__ import annotations
 
@@ -17,10 +20,13 @@ import threading
 import time
 import uuid
 
-from .robotd.base import Aborted, ProtectiveStop, RobotBackend, RobotError
+from .robotd.base import (Aborted, EmergencyStop, ProtectiveStop, RobotBackend, RobotError,
+                          RobotFault)
 
 log = logging.getLogger(__name__)
 
+# Skills that move nothing and are therefore safe to run while the bridge is latched.
+_LATCH_SAFE = ("home", "set_pace")
 # Backend safety values that latch the bridge, mapped to the latch reason.
 _SAFETY_LATCH = {"protective_stop": "protective_stop", "estop": "emergency_stop"}
 _DISCONNECTED = {"connected": False, "backend": "?", "busy": False, "gripper_closed": False,
@@ -41,7 +47,8 @@ class RobotBridge:
         self._idle.set()
         self._lock = threading.Lock()
         self._active = False  # True when a job has been dequeued and not yet finished
-        self._latched: str | None = None   # None | "estop" | "protective_stop" | "emergency_stop"
+        # None | "estop" | "protective_stop" | "emergency_stop" | "robot_fault"
+        self._latched: str | None = None
         self._last_safety: str | None = None
         self._last_state: dict | None = None
 
@@ -95,11 +102,15 @@ class RobotBridge:
 
     # ---------------------------------------------------------------- submit
     def submit(self, skill: str, **args) -> str | None:
-        """Enqueue a skill. Returns None (and publishes `robot.rejected`) while latched."""
+        """Enqueue a skill. Returns None (and publishes `robot.rejected`) while latched.
+
+        `home` and `set_pace` are admitted through the latch: neither commands a motion
+        (`URBackend.set_pace`/`SimBackend.set_pace` only assign the speed profile).
+        """
         job_id = uuid.uuid4().hex[:8]
         with self._lock:
             latched = self._latched
-            if latched is None or skill == "home":
+            if latched is None or skill in _LATCH_SAFE:
                 self._idle.clear()
                 self._q.put((job_id, skill, args))
                 latched = None
@@ -125,9 +136,11 @@ class RobotBridge:
         return n
 
     def estop(self) -> None:
-        self.clear_queue()
+        # Latch *before* draining: a submit() racing the STOP must be rejected, not slip
+        # into the queue behind the drain and run once the backend stop returns.
         with self._lock:
             self._latched = "estop"
+        self.clear_queue()
         try:
             self.backend.stop()
         finally:
@@ -174,17 +187,12 @@ class RobotBridge:
                 if resumed:
                     self.bus.publish("robot.resumed", {})
             except RobotError as e:
-                protective = isinstance(e, ProtectiveStop)
-                self.bus.publish("robot.skill_failed", {"job_id": job_id, "skill": skill, "args": args,
-                                                        "error": str(e),
-                                                        "protective_stop": protective,
-                                                        "aborted": isinstance(e, Aborted)})
-                if protective:
-                    self._latch("protective_stop", "backend")
+                self._report_failure(job_id, skill, args, e, str(e))
             except Exception as e:  # never let the worker die
                 self.bus.publish("robot.skill_failed", {"job_id": job_id, "skill": skill, "args": args,
                                                         "error": f"{type(e).__name__}: {e}",
-                                                        "protective_stop": False, "aborted": False})
+                                                        "protective_stop": False, "aborted": False,
+                                                        "robot_fault": False, "safety": None})
             finally:
                 self._publish_state()
                 with self._lock:
@@ -212,8 +220,49 @@ class RobotBridge:
         else:
             raise RobotError(f"unknown skill {skill!r}")
 
+    # ------------------------------------------------------- failure classing
+    def _report_failure(self, job_id: str, skill: str, args: dict, exc: RobotError,
+                        error: str) -> None:
+        """Publish `robot.skill_failed` and latch when the *robot*, not the grasp, failed.
+
+        N2/N3 — three kinds of failure need three different reactions:
+        * `EmergencyStop`/`ProtectiveStop` → latch as `emergency_stop`/`protective_stop`.
+        * `RobotFault` (not connected, move refused/timed out, target not reached) or *any*
+          failure raised while the backend reports itself disconnected → latch as
+          `robot_fault`. Without this the next part fails identically and the whole order
+          goes terminal in milliseconds while the wizard is told nothing.
+        * everything else (grasp miss, gripper refused, bad IK) → a part failure; supply
+          retries it once.
+        """
+        aborted = isinstance(exc, Aborted)
+        protective = isinstance(exc, ProtectiveStop)
+        fault = (not aborted and not protective
+                 and (isinstance(exc, RobotFault) or not self._backend_connected()))
+        reason = ("emergency_stop" if isinstance(exc, EmergencyStop) else
+                  "protective_stop" if protective else
+                  "robot_fault" if fault else None)
+        self.bus.publish("robot.skill_failed", {"job_id": job_id, "skill": skill, "args": args,
+                                                "error": error,
+                                                "protective_stop": protective,
+                                                "aborted": aborted,
+                                                "robot_fault": fault,
+                                                "safety": reason})
+        if reason is not None:
+            self._latch(reason, "backend", error=error if fault else None)
+
+    def _backend_connected(self) -> bool:
+        try:
+            return bool(self.backend.state().connected)
+        except Exception:
+            return False
+
     # ----------------------------------------------------------------- latch
-    def _latch(self, reason: str, source: str) -> bool:
+    def latch(self, reason: str, source: str = "supply", error: str | None = None) -> bool:
+        """Public latch, for callers that detect a robot fault the backend did not raise
+        (SupplyController's repeated-failure circuit breaker)."""
+        return self._latch(reason, source, error=error)
+
+    def _latch(self, reason: str, source: str, error: str | None = None) -> bool:
         """Latch on a transition; publishes `robot.estop` outside the lock. Idempotent."""
         with self._lock:
             if self._latched == reason:
@@ -221,7 +270,10 @@ class RobotBridge:
             self._latched = reason
         # jobs queued before the latch must not run either (they would fail identically)
         self.clear_queue()
-        self.bus.publish("robot.estop", {"reason": reason, "source": source})
+        payload = {"reason": reason, "source": source}
+        if error is not None:
+            payload["error"] = error
+        self.bus.publish("robot.estop", payload)
         self._publish_state()
         return True
 

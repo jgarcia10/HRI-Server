@@ -14,13 +14,26 @@ import {
 
 const SPEECH = ["wait", "faster", "slower", "give me the red one", "put it on the left"];
 
-// Blocked-reason copy shown to the wizard. estop/protective_stop/emergency_stop share the
-// same recovery path: reset the controller if needed, then Home (which also clears the
-// robot's own `latched` state and lets supply resume with the same part).
-function blockedMessage(reason: string, needed: string | null): string {
-  if (reason === "estop" || reason === "protective_stop" || reason === "emergency_stop") {
+// Recovery copy for each latch reason. All of them end at Home (which clears the robot's own
+// `latched` state and lets supply resume with the same part) — what differs is what has to
+// happen on the hardware first.
+function latchMessage(reason: string): string | null {
+  if (reason === "emergency_stop") {
+    return "E-stop pressed — release it, re-power in PolyScope, then Home";
+  }
+  if (reason === "robot_fault") {
+    return "Robot refused/failed to move — check connection and PolyScope mode, then Home";
+  }
+  if (reason === "estop" || reason === "protective_stop") {
     return "Robot stopped — reset in PolyScope if needed, then Home";
   }
+  return null;
+}
+
+// Blocked-reason copy shown to the wizard.
+function blockedMessage(reason: string, needed: string | null): string {
+  const latch = latchMessage(reason);
+  if (latch) return latch;
   if (reason === "mat_full") {
     return "Mat full — clear a slot (or press Mat cleared) to continue";
   }
@@ -112,7 +125,9 @@ export function Runner() {
         </div>
         {robot?.latched && (
           <div className="mt-3 rounded bg-red-600/20 px-3 py-2 text-sm font-semibold text-red-600">
-            ⛔ LATCHED: {robot.latched} — press Home to resume
+            ⛔ LATCHED: {robot.latched} —{" "}
+            {latchMessage(robot.latched) ?? "press Home to resume"}
+            {supply?.paused && <span className="ml-2 font-normal">· supply paused</span>}
           </div>
         )}
       </section>

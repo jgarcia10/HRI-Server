@@ -41,11 +41,28 @@ Bus topics: `robot.skill_queued/started/done/failed`, `robot.part_staged`, `robo
 `robot.estop`, `robot.rejected`, `robot.resumed`; `supply.decision`, `supply.blocked`,
 `supply.state`; `anima.perception`, `anima.verdict`, `anima.error`.
 
-`robot.state.latched` is `"estop" | "protective_stop" | "emergency_stop" | null` — while set,
-every skill except `home` is rejected (`robot.rejected {skill, args, reason}`) and a
-successful `home` clears it (`robot.resumed`). `supply.state.blocked.reason` is one of
-`mat_full | part_failed | estop | protective_stop | emergency_stop`. Per-skill durations are
-recorded as `robot.<skill>_duration_s` (e.g. `robot.supply_duration_s`) in the CSV.
+`robot.state.latched` is `"estop" | "protective_stop" | "emergency_stop" | "robot_fault" |
+null` — while set, every skill except `home` and `set_pace` is rejected
+(`robot.rejected {skill, args, reason}`) and a successful `home` clears it (`robot.resumed`).
+`set_pace` is admitted because it commands no motion: without that, a pace change made during
+a stop would never reach the robot and it would run at `normal` while the profile and the CSV
+say `slow`. `supply.state.blocked.reason` is one of
+`mat_full | part_failed | estop | protective_stop | emergency_stop | robot_fault`, and
+`supply.state.paused` says whether supply is holding.
+
+The four robot-side reasons and what the wizard has to do:
+
+| reason | meaning | recovery |
+| --- | --- | --- |
+| `estop` | the wizard pressed STOP | press **Home** |
+| `protective_stop` | PolyScope protective stop | reset in PolyScope, then **Home** |
+| `emergency_stop` | the hardware E-stop button is pressed | release it, re-power in PolyScope, then **Home** |
+| `robot_fault` | the robot refused/failed to move — not connected, `moveJ/moveL refused`, `move timeout`, `target not reached`, or two supply failures in a row on different parts | check the connection and PolyScope mode, then **Home** |
+
+`robot.skill_failed` carries `{protective_stop, aborted, robot_fault, safety}`; `safety` is
+the latch reason when the failure latched the bridge and `null` for an ordinary grasp miss
+(which supply retries once). Per-skill durations are recorded as `robot.<skill>_duration_s`
+(e.g. `robot.supply_duration_s`) in the CSV.
 
 HTTP: `GET /api/kit/robot/state`, `POST /api/kit/robot/home`, `POST /api/kit/robot/open_gripper`,
 `POST /api/kit/robot/stop`, `POST /api/kit/robot/connect` (re-attempts the backend connection,
@@ -54,4 +71,6 @@ returns robot state); `GET /api/kit/supply/state`, `POST /api/kit/supply/profile
 `{"type": "mat_cleared"}` (all staged slots considered free — use at order transitions) in
 addition to the existing per-slot `{"type": "slot_cleared", "payload": {"slot": ...}}`.
 `session/start` returns 409 while the robot is still busy from the previous session;
-`session/stop` waits up to 6 s for any in-flight skill.
+`session/stop` waits up to 25 s for any in-flight skill (a URSim supply cycle measured 22 s;
+lab cycles are ≤ 5 s). Process shutdown stops the session first, then the bridge, then the
+LLM worker, so a Ctrl-C mid-block still closes the recording.

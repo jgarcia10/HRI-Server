@@ -31,6 +31,7 @@ def test_recorded_topics_set():
         "task.countdown", "task.step", "task.order_started",
         "task.part_placed", "task.perturbation",
         "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared",
+        "wizard.mat_cleared",
         "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
         "robot.rejected", "robot.resumed",
         "supply.decision", "supply.blocked",
@@ -44,6 +45,13 @@ def test_skill_done_is_one_series_per_skill():
         [("robot.supply_duration_s", 4.2)]
     assert sample_rows("robot.skill_done", {"skill": "home", "duration_s": 3.0}) == \
         [("robot.home_duration_s", 3.0)]
+
+
+def test_mat_cleared_is_an_impulse():
+    """C5: the mat sweep frees every slot — without it in the CSV a supply gap around an
+    order transition is unexplainable."""
+    assert sample_rows("wizard.mat_cleared", {}) == [("wizard.mat_cleared", 1.0)]
+    assert sample_rows("wizard.slot_cleared", {"slot": "L"}) == [("wizard.slot_cleared", 1.0)]
 
 
 def test_robot_latch_topics_are_impulses():

@@ -23,6 +23,7 @@ STREAM_TOPICS = {
     "ppg.hr", "ppg.hrv", "model.estimates", "task.state", "robot.state", "supply.state",
     "anima.perception", "anima.verdict",
     "robot.rejected", "robot.resumed", "robot.estop", "supply.blocked",
+    "wizard.mat_cleared",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
@@ -32,8 +33,16 @@ MJPEG_FPS = 15
 async def _lifespan(app: FastAPI):
     yield
     # Shutdown: never leave the robot mid-motion or the RTDE script owning the socket when
-    # the process exits (Ctrl-C). Order matters — estop the physical motion first, then tear
-    # down the bridge worker/backend connection, then the LLM worker.
+    # the process exits (Ctrl-C). Order matters — stop the session first (it unsubscribes
+    # supply/engine so nothing submits new jobs, and closes the recording), then estop the
+    # physical motion, then tear down the bridge worker/backend connection, then the LLM
+    # worker.
+    kit_session = getattr(app.state, "kit_session", None)
+    if kit_session is not None:
+        try:
+            kit_session.stop()
+        except Exception:
+            log.exception("kit_session.stop() during shutdown failed")
     bridge = getattr(app.state, "robot_bridge", None)
     if bridge is not None:
         try:

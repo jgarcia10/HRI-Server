@@ -355,6 +355,107 @@ def test_mat_full_with_unstaged_current_part_reports_blocked_and_slot_cleared_re
     bridge.stop(); ctrl.stop()
 
 
+def test_pace_change_reaches_the_backend_while_the_robot_is_latched():
+    """N1: `set_pace` moves nothing, so the latch must not swallow it — otherwise the robot
+    runs at `normal` while the profile and the CSV both say `slow`."""
+    backend = Recorder(timing=FAST, rng=random.Random(0))
+    bus, events, eng, bridge, ctrl = stack_with(backend, SupplyProfile(lookahead=1, side="C"))
+    bridge.estop()
+    assert bridge.latched() == "estop"
+
+    ctrl.set_profile(pace="slow")
+    assert bridge.wait_idle(2.0)
+    assert backend.state().pace == "slow", "pace change was swallowed by the latch"
+    assert ctrl.status()["profile"]["pace"] == "slow"
+
+    # and on resume it is re-sent once (belt and braces)
+    backend.set_pace("normal")
+    events.clear()
+    assert bridge.submit("home") is not None
+    assert until(lambda: backend.state().pace == "slow", 2.0), "pace not re-sent on resume"
+    bridge.stop(); ctrl.stop()
+
+
+def test_session_started_while_latched_still_sets_the_pace():
+    """N1: SupplyController.start() submits set_pace before anything else."""
+    bus = MessageBus()
+    block = load_block(F1)
+    backend = Recorder(timing=FAST, rng=random.Random(0))
+    bridge = RobotBridge(bus, backend, monitor_interval=5.0)
+    bridge.start()
+    bridge.estop()
+    ctrl = SupplyController(bus, bridge, block, SupplyProfile(lookahead=1, pace="slow"))
+    ctrl.start()
+    assert bridge.wait_idle(2.0)
+    assert backend.state().pace == "slow"
+    assert ctrl.status()["paused"] is True     # still latched: no motion
+    assert backend.calls == []
+    bridge.stop(); ctrl.stop()
+
+
+def test_robot_fault_pauses_supply_instead_of_failing_every_part():
+    """N2: a refused/failed move (disconnected backend, moveJ refused, timeout, target not
+    reached) must not walk the whole order into `failed` in milliseconds."""
+    from hub.kit_study.robotd.base import RobotFault
+
+    class Broken(Recorder):
+        armed = True
+        def pick(self, depot_slot):
+            self.calls.append(("pick", depot_slot))
+            if self.armed:
+                raise RobotFault("UR backend not connected")
+            return super().pick(depot_slot)
+
+    backend = Broken(timing=FAST, rng=random.Random(0))
+    bus, events, eng, bridge, ctrl = stack_with(backend, SupplyProfile(lookahead=2, side="C"))
+    eng.start_block()
+    assert until(lambda: ctrl.status()["blocked"] is not None, 2.0)
+    time.sleep(0.2)                                      # ample time for a cascade
+
+    st = ctrl.status()
+    assert st["paused"] is True
+    assert st["blocked"]["reason"] == "robot_fault"
+    assert st["failed"] == [] and st["inflight"] == []
+    assert len([t for t, _ in events if t == "robot.skill_failed"]) == 1
+    assert len(backend.calls) == 1, f"kept moving after a robot fault: {backend.calls}"
+    assert bridge.latched() == "robot_fault"
+    assert len([t for t, _ in events if t == "supply.blocked"]) == 1
+
+    backend.armed = False
+    assert bridge.submit("home") is not None
+    assert settle(bridge, ctrl, lambda s: "F1O1P1" in s["staged"].values(), timeout=3.0)
+    assert ctrl.status()["blocked"] is None and ctrl.status()["failed"] == []
+    bridge.stop(); ctrl.stop()
+
+
+def test_two_failures_on_different_parts_trip_the_circuit_breaker():
+    """N2 circuit breaker: repeated grasp-shaped failures across *different* parts are the
+    arm, not the grasps — pause and latch instead of emptying the order into `failed`."""
+    from hub.kit_study.robotd.base import RobotError
+
+    class AlwaysMisses(Recorder):
+        def pick(self, depot_slot):
+            self.calls.append(("pick", depot_slot))
+            raise RobotError("miss")
+
+    backend = AlwaysMisses(timing=FAST, rng=random.Random(0))
+    bus, events, eng, bridge, ctrl = stack_with(backend, SupplyProfile(lookahead=1, side="C"))
+    eng.start_block()
+    # P1 fails, is retried, fails again (terminal), then P2 fails -> two consecutive
+    # failures on different parts -> robot_fault
+    assert until(lambda: ctrl.status()["blocked"] is not None
+                 and ctrl.status()["blocked"]["reason"] == "robot_fault", 3.0), ctrl.status()
+    time.sleep(0.2)
+
+    st = ctrl.status()
+    assert st["paused"] is True and st["failed"] == ["F1O1P1"]
+    assert bridge.latched() == "robot_fault"
+    assert len(backend.calls) == 3, backend.calls
+    estops = [d for t, d in events if t == "robot.estop"]
+    assert estops[-1]["reason"] == "robot_fault" and estops[-1]["source"] == "supply"
+    bridge.stop(); ctrl.stop()
+
+
 def test_set_profile_does_not_hold_lock_while_submitting():
     """N2: set_profile does not deadlock by holding lock during bridge.submit"""
     import threading

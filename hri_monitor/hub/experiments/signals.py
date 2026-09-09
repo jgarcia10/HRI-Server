@@ -6,6 +6,7 @@ RECORDED_TOPICS = {
     "task.countdown", "task.step", "task.order_started",
     "task.part_placed", "task.perturbation",
     "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared",
+    "wizard.mat_cleared",
     "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
     "robot.rejected", "robot.resumed",
     "supply.decision", "supply.blocked",
@@ -35,7 +36,9 @@ def sample_rows(topic: str, data: dict) -> list[tuple[str, float]]:
         return [("task.step_index", float(data["step_index"]))]
     if topic == "task.order_started":
         return [("task.order_index", float(data["order_index"]))]
-    if topic in ("task.part_placed", "task.perturbation", "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared", "supply.decision", "supply.blocked"):
+    if topic in ("task.part_placed", "task.perturbation", "wizard.reposition", "wizard.speech",
+                 "wizard.request_part", "wizard.slot_cleared", "wizard.mat_cleared",
+                 "supply.decision", "supply.blocked"):
         return [(topic, 1.0)]
     if topic == "robot.skill_done":
         # I4: one series per skill — mixing set_pace/home/supply makes the M4 "supply cycle

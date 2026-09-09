@@ -56,6 +56,11 @@ class SupplyController:
         self._blocked_published: bool = False  # track published state to avoid spam
         self._requests = 0
         self._active = False
+        # N2 circuit breaker: the part id of the last non-robot skill failure with no
+        # successful staging since. Two in a row on *different* parts means the arm, not the
+        # grasp, is the problem (e.g. every IK solution rejected) — latch instead of walking
+        # the whole order into `failed`.
+        self._last_failed_pid: str | None = None
         # C1/C3: the robot is latched (STOP or protective stop); supply must not submit anything
         # until a successful `home` publishes robot.resumed.
         self._paused: bool = False
@@ -118,7 +123,11 @@ class SupplyController:
                 self._supplied.clear(); self._inflight.clear()
                 self._retried.clear(); self._failed.clear()
                 self._current_part_id = None
-                self._blocked = None; self._blocked_published = False
+                self._last_failed_pid = None
+                if not self._paused:
+                    # N10: while paused the blocked banner describes the pause, and a new
+                    # order does not end it — re-arming the publish flag would spam the bus.
+                    self._blocked = None; self._blocked_published = False
                 self._requests = 0
             self._emit(); self._replenish()
         elif topic == "task.step":
@@ -143,7 +152,9 @@ class SupplyController:
             self._emit(); self._replenish()
         elif topic in ("task.order_completed", "task.block_completed"):
             with self._lock:
-                self._plan = []; self._inflight.clear(); self._blocked = None; self._blocked_published = False
+                self._plan = []; self._inflight.clear()
+                if not self._paused:   # N10: see task.order_started
+                    self._blocked = None; self._blocked_published = False
             self._emit()
         elif topic == "robot.part_staged":
             with self._lock:
@@ -152,18 +163,27 @@ class SupplyController:
                     del self._inflight[pid]
                 self._staged[data["slot"]] = pid
                 self._supplied.add(pid)
+                self._last_failed_pid = None   # a success breaks the consecutive-failure run
             self._emit(); self._replenish()
         elif topic == "robot.skill_failed":
             pid = (data.get("args") or {}).get("part_id")
-            # C3: a protective stop is a *robot* fault, not a part fault — the part goes back to
-            # pending and supply pauses; without this every remaining part fails in a cascade.
-            robot_fault = bool(data.get("protective_stop")) or bool(data.get("aborted"))
+            # C3/N2: a protective stop, an E-stop, an abort or a robot fault (arm not
+            # connected / refused / timed out) is a *robot* fault, not a part fault — the
+            # part goes back to pending and supply pauses; without this every remaining part
+            # fails in a cascade.
+            protective = bool(data.get("protective_stop"))
+            fault = bool(data.get("robot_fault"))
+            aborted = bool(data.get("aborted"))
+            robot_fault = protective or fault or aborted
+            trip_breaker = False
             with self._lock:
-                if data.get("protective_stop"):
+                if protective or fault:
                     # pause immediately: the bridge's robot.estop arrives only after this callback
                     self._paused = True
-                    self._pause_reason = "protective_stop"
-                elif data.get("aborted"):
+                    # `safety` carries emergency_stop vs protective_stop vs robot_fault
+                    self._pause_reason = (data.get("safety")
+                                          or ("protective_stop" if protective else "robot_fault"))
+                elif aborted:
                     self._paused = True
                     self._pause_reason = self._pause_reason or "estop"
                 if pid and pid in self._inflight:
@@ -175,8 +195,22 @@ class SupplyController:
                         else:
                             # F1+F4: second failure → terminal
                             self._failed.add(pid)
+                        # N2 circuit breaker: two failures in a row on different parts is the
+                        # arm failing, not two unlucky grasps.
+                        if self._last_failed_pid is not None and self._last_failed_pid != pid:
+                            trip_breaker = True
+                            self._paused = True
+                            self._pause_reason = "robot_fault"
+                        self._last_failed_pid = pid
                         # N4: only reset blocked if we handled this pid
-                        self._blocked = None; self._blocked_published = False
+                        if not trip_breaker:
+                            self._blocked = None; self._blocked_published = False
+            if trip_breaker:
+                # latch the robot too: whatever is wrong, it must not keep being asked to move
+                latch = getattr(self.bridge, "latch", None)
+                if latch is not None:
+                    latch("robot_fault", "supply",
+                          f"two consecutive supply failures ({self._last_failed_pid})")
             self._emit()
             # Always replenish to handle retry or blocked detection
             self._replenish()
@@ -196,7 +230,13 @@ class SupplyController:
             with self._lock:
                 self._paused = False
                 self._pause_reason = None
+                self._last_failed_pid = None
                 self._blocked = None; self._blocked_published = False
+                pace = self.profile.pace
+            # N1 (belt and braces): a `set_pace` submitted while latched is admitted now, but
+            # re-send it on resume so the backend can never be left at the wrong speed after
+            # a STOP → profile change → Home sequence.
+            self.bridge.submit("set_pace", level=pace)
             self._emit(); self._replenish()
         elif topic == "robot.rejected":
             if data.get("skill") == "supply":
@@ -215,6 +255,9 @@ class SupplyController:
                 if self._current_part_id and self._current_part_id in self._failed:
                     self._failed.discard(self._current_part_id)
                     self._retried.discard(self._current_part_id)
+            # N9: the UI's `failed` list is stale until a state message goes out, and
+            # _replenish() only emits when it actually submitted something.
+            self._emit()
             self._replenish(on_request=True)
         elif topic == "wizard.slot_cleared":
             # F2: experimenter physically removed part from slot
@@ -222,13 +265,15 @@ class SupplyController:
             with self._lock:
                 if slot and slot in self._staged:
                     del self._staged[slot]
-                self._blocked = None; self._blocked_published = False
+                if not self._paused:   # N10: see task.order_started
+                    self._blocked = None; self._blocked_published = False
             self._emit(); self._replenish()
         elif topic == "wizard.mat_cleared":
             # C5: the whole staging mat was swept (typically after a timed-out order)
             with self._lock:
                 self._staged.clear()
-                self._blocked = None; self._blocked_published = False
+                if not self._paused:   # N10: see task.order_started
+                    self._blocked = None; self._blocked_published = False
             self._emit(); self._replenish()
 
     # --------------------------------------------------------------- policy

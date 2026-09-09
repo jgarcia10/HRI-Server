@@ -27,7 +27,8 @@ from pathlib import Path
 
 import yaml
 
-from .base import (Aborted, RobotBackend, RobotError, ProtectiveStop, RobotState, STAGING_SLOTS,
+from .base import (Aborted, EmergencyStop, RobotBackend, RobotError, RobotFault, ProtectiveStop,
+                   RobotState, STAGING_SLOTS,
                    validate_depot_slot, validate_pace, validate_staging_slot)
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
@@ -101,6 +102,19 @@ class URBackend(RobotBackend):
 
     # -------------------------------------------------------------- lifecycle
     def connect(self) -> None:
+        """(Re)open the three RTDE interfaces.
+
+        Two guards (fix round 2):
+        * A reconnect clears the stop latch, so it must never be a back door around a STOP
+          that a worker thread is still unwinding — refuse while a skill is running under a
+          latched abort. `home` is the resume path, not `connect`.
+        * Interfaces from a previous connect are closed first; otherwise a retry after a
+          half-open connection leaks the old sockets and the RTDE control script keeps
+          owning the robot.
+        """
+        if self._abort.is_set() and self._busy:
+            raise RobotError("stop latched; send home first")
+        self._close_interfaces()
         try:
             self.ctrl, self.recv, self.io = self._factory(self.ip)
         except Exception as e:
@@ -114,6 +128,9 @@ class URBackend(RobotBackend):
         stops polling and issues its own stopJ/stopL, then close control → receive → io.
         """
         self._abort.set()
+        self._close_interfaces()
+
+    def _close_interfaces(self) -> None:
         for iface in (self.ctrl, self.recv, self.io):
             if iface is None:
                 continue
@@ -137,11 +154,17 @@ class URBackend(RobotBackend):
 
     def _require(self) -> None:
         if self.ctrl is None or self.recv is None:
-            raise RobotError("UR backend not connected")
+            raise RobotFault("UR backend not connected")
+        self._check_safety("emergency stop active", "protective stop active — reset in PolyScope")
+
+    def _check_safety(self, es_msg: str, ps_msg: str | None = None) -> None:
+        """N3: the hardware E-stop and a protective stop need different recoveries, so they
+        are different exception types (EmergencyStop is a ProtectiveStop, so callers that
+        only care about "the controller stopped us" still work)."""
         if self.recv.isEmergencyStopped():
-            raise ProtectiveStop("emergency stop active")
+            raise EmergencyStop(es_msg)
         if self.recv.isProtectiveStopped():
-            raise ProtectiveStop("protective stop active — reset in PolyScope")
+            raise ProtectiveStop(ps_msg if ps_msg is not None else es_msg)
 
     def _sp(self):
         return self.speeds[self._pace]
@@ -174,9 +197,14 @@ class URBackend(RobotBackend):
             return False
 
     def _stop_motion(self, kind: str) -> None:
-        """Decelerate the arm from the worker thread, then report the abort."""
-        stop = getattr(self.ctrl, "stopL" if kind == "L" else "stopJ")
+        """Decelerate the arm from the worker thread, then report the abort.
+
+        The `getattr` is inside the try on purpose: `disconnect()` may have set `self.ctrl`
+        to None between the abort latching and this call, and that race is still an abort,
+        not an `AttributeError` escaping as an unclassified failure.
+        """
         try:
+            stop = getattr(self.ctrl, "stopL" if kind == "L" else "stopJ")
             stop(STOP_DECEL)
         except Exception as e:            # comms died mid-stop: still an abort, not a failure
             raise Aborted(f"stop requested; stop{kind} failed: {e}") from e
@@ -206,7 +234,7 @@ class URBackend(RobotBackend):
             elif reached() and self._at_rest():
                 return                    # controller never reported progress, but we are there
             if self._clock() > deadline:
-                raise RobotError("move timeout")
+                raise RobotFault("move timeout")
             if self._abort.wait(self.poll_s):
                 self._stop_motion(kind)   # always raises Aborted
 
@@ -214,16 +242,14 @@ class URBackend(RobotBackend):
         self._check_abort()
         baseline = self._async_state()[1]
         if not issue():
-            if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
-                raise ProtectiveStop("protective/emergency stop during motion")
-            raise RobotError(f"move{kind} refused")
+            self._check_safety("protective/emergency stop during motion")
+            raise RobotFault(f"move{kind} refused")
         self._wait_async(kind, baseline, reached)
-        if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
-            raise ProtectiveStop("protective/emergency stop during motion")
+        self._check_safety("protective/emergency stop during motion")
         deadline = self._clock() + self.reach_grace_s
         while not reached():
             if self._clock() >= deadline:
-                raise RobotError("target not reached")
+                raise RobotFault("target not reached")
             time.sleep(min(self.poll_s, 0.05))
 
     def _moveJ(self, q):

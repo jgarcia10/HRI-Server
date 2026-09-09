@@ -23,7 +23,7 @@ export type RobotState = {
   last_skill: string | null;
   safety: string;
   queue: number;
-  latched: "estop" | "protective_stop" | "emergency_stop" | null;
+  latched: "estop" | "protective_stop" | "emergency_stop" | "robot_fault" | null;
 };
 
 export type SupplyState = {
@@ -34,13 +34,20 @@ export type SupplyState = {
     announce: boolean;
   };
   order_id: string | null;
+  paused: boolean;
   staged: Record<string, string>;
   inflight: string[];
   supplied: string[];
   next_part_id: string | null;
   failed: string[];
   blocked: {
-    reason: "mat_full" | "part_failed" | "estop" | "protective_stop" | "emergency_stop";
+    reason:
+      | "mat_full"
+      | "part_failed"
+      | "estop"
+      | "protective_stop"
+      | "emergency_stop"
+      | "robot_fault";
     needed: string | null;
     [k: string]: unknown;
   } | null;

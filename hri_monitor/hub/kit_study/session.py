@@ -20,7 +20,10 @@ _MARKER_TOPICS = {"task.order_started", "task.perturbation",
                   "robot.part_staged", "robot.skill_failed", "robot.estop",
                   "robot.rejected", "robot.resumed",
                   "supply.decision", "supply.blocked"}
-_STOP_WAIT_S = 6.0   # session teardown waits for the in-flight robot job (I3)
+# Session teardown waits for the in-flight robot job (I3). A measured URSim supply cycle is
+# ~22 s (lab cycles are <= 5 s), so 6 s used to log a false "robot still busy" and let the
+# job's robot.part_staged land in the next session. Start-while-busy still 409s.
+_STOP_WAIT_S = 25.0
 _CONFIGS_DIR = Path(__file__).parent / "configs"
 _SPEECH_LABEL_MAX = 120
 
@@ -165,7 +168,8 @@ class KitSession:
             label = f"staged:{data.get('part_id')}@{data.get('slot')}"
         elif topic == "robot.skill_failed":
             kind = ("aborted" if data.get("aborted") else
-                    "protective_stop" if data.get("protective_stop") else "error")
+                    data.get("safety") or
+                    ("protective_stop" if data.get("protective_stop") else "error"))
             pid = (data.get("args") or {}).get("part_id") or ""
             label = f"skill_failed:{data.get('skill')}:{pid}:{kind}"
         elif topic == "robot.estop":
