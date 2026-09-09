@@ -221,6 +221,23 @@ export function sessionHeadline(task: KitTaskState | null): { text: string; tone
   return { text: `${figure}${name ? ` · ${name}` : ""}${piece}`, tone: "accent" };
 }
 
+/* ---------------------------------------------------------- questionnaires */
+
+/** The two post-block instruments, in the order the participant answers them. */
+export const INSTRUMENT_ORDER = ["nasa_tlx", "trust_hrts"] as const;
+
+const INSTRUMENT_WORD: Record<string, string> = {
+  nasa_tlx: "NASA-TLX",
+  trust_hrts: "Trust",
+};
+
+/** `nasa_tlx` → "NASA-TLX" — what the experimenter calls it out loud. */
+export const instrumentWord = (key: string): string => INSTRUMENT_WORD[key] ?? key;
+
+/** The range each instrument is scored on, for the score read-outs. */
+export const instrumentRange = (key: string): string =>
+  key === "trust_hrts" ? "1–7" : "0–100";
+
 /** mm:ss for the countdown of a timed figure. */
 export function clock(seconds: number | null | undefined): string | null {
   if (seconds === null || seconds === undefined) return null;

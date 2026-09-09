@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DeliveryCard } from "../components/wizard/DeliveryCard";
 import { LogCard } from "../components/wizard/LogCard";
 import { NowBuildingCard } from "../components/wizard/NowBuildingCard";
+import { QuestionnaireCard } from "../components/wizard/QuestionnaireCard";
 import { RobotCard } from "../components/wizard/RobotCard";
 import { type RunningSession, SessionCard } from "../components/wizard/SessionCard";
 import { SpeechCard } from "../components/wizard/SpeechCard";
@@ -26,16 +27,17 @@ import {
   robotOpenGripper,
   robotStop,
   setSupplyProfile,
+  skipQuestionnaires,
   startSession,
   stopSession,
   useKitWs,
 } from "../lib/kit";
 
 /** Which card shows an error — failures are reported where they were caused, never globally. */
-type CardId = "session" | "robot" | "delivery" | "log" | "speech";
+type CardId = "session" | "robot" | "delivery" | "log" | "speech" | "questionnaire";
 
 export function Runner() {
-  const { task, robot, supply, connected } = useKitWs();
+  const { task, robot, supply, questionnaire, connected } = useKitWs();
   const [participant, setParticipant] = useState("P01");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [blockNo, setBlockNo] = useState<1 | 2>(1);
@@ -112,6 +114,9 @@ export function Runner() {
   // publishes a fresh idle task.state.
   const active = task !== null && task.phase !== "idle";
   const canPlace = active && task?.phase === "running";
+  // The hub answers session/start with a 409 while the previous block's questionnaires are
+  // open, so Start is greyed out (and says why) instead of failing on the click.
+  const questionnairesPending = questionnaire.status === "pending";
 
   const logPiecePlaced = useCallback(
     () => run("log", () => postEvent("part_placed")),
@@ -152,7 +157,7 @@ export function Runner() {
       {/*
         Two columns from 1100px of *card area* (container query, so the sidebar is already
         discounted), one below. The column wrappers are `display: contents` while narrow, so
-        the six cards stay direct grid items there and the `order-*` utilities give the
+        the seven cards stay direct grid items there and the `order-*` utilities give the
         single-column reading order; wide, each wrapper becomes its own stacked column and
         the cards keep their relative order inside it — no ragged gaps between rows.
       */}
@@ -171,6 +176,7 @@ export function Runner() {
                 onCondition={setCondition}
                 active={active}
                 running={running}
+                questionnairesPending={questionnairesPending}
                 error={errors.session ?? null}
                 onStart={() =>
                   run("session", () =>
@@ -189,6 +195,13 @@ export function Runner() {
               />
             </div>
             <div className="order-3">
+              <QuestionnaireCard
+                state={questionnaire}
+                error={errors.questionnaire ?? null}
+                onSkip={(reason) => run("questionnaire", () => skipQuestionnaires(reason))}
+              />
+            </div>
+            <div className="order-5">
               <RobotCard
                 robot={robot}
                 supply={supply}
@@ -198,7 +211,7 @@ export function Runner() {
                 onReconnect={() => run("robot", robotConnect)}
               />
             </div>
-            <div className="order-5">
+            <div className="order-7">
               <LogCard
                 task={task}
                 active={active}

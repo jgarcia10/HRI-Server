@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { WifiOff } from "lucide-react";
-import { useKitWs, type KitPart, type KitTaskState, type SupplyState } from "../lib/kit";
+import {
+  useKitWs,
+  type KitPart,
+  type KitTaskState,
+  type QuestionnaireState,
+  type SupplyState,
+} from "../lib/kit";
 import { BrickFigure, PartGlyph } from "../components/kit/BrickFigure";
 import { colorWord, shapeWord, textOf } from "../components/kit/bricks";
 import { placementHint } from "../components/kit/placement";
+import { Questionnaire, QuestionnaireThanks } from "../components/kit/Questionnaire";
 
 /* ------------------------------------------------------------------ styling
    The screen is a TV ~1.5 m away. Every size is a multiple of --u, which
@@ -313,8 +320,68 @@ function Timer({ remaining, total }: { remaining: number; total: number }) {
 
 /* ------------------------------------------------------------------- pages */
 
+/**
+ * True for a few seconds after the participant finishes the *last* instrument, so the
+ * "thank you" lands before the welcome screen comes back. Only the pending → completed
+ * transition triggers it: a reload while the hub still reports the finished set (it keeps
+ * the last outcome until the next block stops) must not replay it.
+ */
+const THANKS_MS = 7000;
+
+function useThankYou(q: QuestionnaireState) {
+  const [show, setShow] = useState(false);
+  const wasPending = useRef(false);
+
+  useEffect(() => {
+    if (q.status === "pending") {
+      wasPending.current = true;
+      setShow(false);
+      return;
+    }
+    if (wasPending.current && q.status === "done" && q.outcome === "completed") setShow(true);
+    wasPending.current = false;
+  }, [q]);
+
+  // Separate effect: the timer must survive the websocket republishing the same done state.
+  useEffect(() => {
+    if (!show) return;
+    const id = setTimeout(() => setShow(false), THANKS_MS);
+    return () => clearTimeout(id);
+  }, [show]);
+
+  return show;
+}
+
 export function Screen() {
-  const { task, supply, connected } = useKitWs();
+  const { task, supply, questionnaire, connected } = useKitWs();
+
+  // The POST response already carries the next questionnaire state; use it until the
+  // websocket echoes the same change, so tapping Continue is instant on a slow link.
+  const [answered, setAnswered] = useState<QuestionnaireState | null>(null);
+  useEffect(() => setAnswered(null), [questionnaire]);
+  const q = answered ?? questionnaire;
+
+  const thanks = useThankYou(q);
+  // Questionnaires open when a block is stopped, so they only ever displace the idle /
+  // finished screens — a block that is still running keeps the task view no matter what.
+  const inBlock = task !== null && task.phase !== "idle" && task.phase !== "done";
+
+  if (!inBlock && q.status === "pending") {
+    return (
+      <Stage>
+        <Questionnaire state={q} onSubmitted={setAnswered} />
+        <Link connected={connected} />
+      </Stage>
+    );
+  }
+  if (!inBlock && thanks) {
+    return (
+      <Stage>
+        <QuestionnaireThanks />
+        <Link connected={connected} />
+      </Stage>
+    );
+  }
 
   if (!task || task.phase === "idle") {
     return (

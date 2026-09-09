@@ -38,6 +38,7 @@ export function SessionCard({
   onCondition,
   active,
   running,
+  questionnairesPending,
   error,
   onStart,
   onStop,
@@ -51,6 +52,8 @@ export function SessionCard({
   onCondition: (v: ConditionCode) => void;
   active: boolean;
   running: RunningSession;
+  /** The hub refuses to open a block while the previous one's questionnaires are unanswered. */
+  questionnairesPending: boolean;
   error: string | null;
   onStart: () => void;
   onStop: () => void;
@@ -163,8 +166,14 @@ export function SessionCard({
           variant="go"
           size="lg"
           icon={Play}
-          disabled={active}
-          title={active ? "A block is already running — stop it first" : `Start block ${blockNo}`}
+          disabled={active || questionnairesPending}
+          title={
+            active
+              ? "A block is already running — stop it first"
+              : questionnairesPending
+                ? "Participant is still answering the questionnaires"
+                : `Start block ${blockNo}`
+          }
           onClick={onStart}
         >
           Start block {blockNo}
