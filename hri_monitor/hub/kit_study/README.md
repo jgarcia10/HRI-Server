@@ -74,3 +74,10 @@ addition to the existing per-slot `{"type": "slot_cleared", "payload": {"slot": 
 `session/stop` waits up to 25 s for any in-flight skill (a URSim supply cycle measured 22 s;
 lab cycles are ≤ 5 s). Process shutdown stops the session first, then the bridge, then the
 LLM worker, so a Ctrl-C mid-block still closes the recording.
+
+## Questionnaires
+
+After each block the participant answers NASA-TLX and a trust scale on their screen
+(`hub/kit_study/questionnaires.py`; stored in the `questionnaire` table; exported by
+`/api/kit/questionnaires/{nasa_tlx|trust_hrts}.csv` in the Physio-HRC layout). A new block cannot
+start while they are pending — see RUNBOOK §F.

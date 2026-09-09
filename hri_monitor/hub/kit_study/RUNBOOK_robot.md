@@ -174,3 +174,23 @@ anima test suite specifically (not needed for `hri_monitor`'s own `.venv/bin/pyt
 to GPT via the Responses API (`client.responses.create(...)`), reads `OPENAI_API_KEY` from the
 environment (same key as section D), and applies `timeout_s`/`max_retries`/`reasoning_budget`
 from `llm.yaml` — see section D for why those matter.
+
+## F. Post-block questionnaires (NASA-TLX + trust)
+
+Every block ends with the two self-reports **on the participant screen** (`/?view=screen`,
+touchscreen/tablet or mouse): NASA-TLX raw (6 items, 0–100, performance runs Perfect → Failure)
+then the HRTS-style trust scale (4 items, 1–7). They open automatically when the wizard presses
+**Stop block**; the next **Start block** is refused (409) until both are answered or the wizard
+presses **Skip questionnaires** (the skip is recorded as a row with `answers = {"skipped": …}`
+and no score, so the gap is documented). Answers live in the `questionnaire` table of
+`data/hri.db`, linked to the session, the recording and the condition.
+
+    GET  /api/kit/questionnaire                    # pending / done / none (+ items and scales)
+    POST /api/kit/questionnaire {instrument, answers}
+    POST /api/kit/questionnaire/skip {reason}
+    GET  /api/kit/questionnaires                   # every stored row (json)
+    GET  /api/kit/questionnaires/nasa_tlx.csv      # participant_id,condition,mental_demand,…,overall_score
+    GET  /api/kit/questionnaires/trust_hrts.csv    # participant_id,condition,reliability,…,overall_trust
+
+The CSV layout is the one used in the Physio-HRC dataset (`questionnaires/nasa_tlx.csv`,
+`questionnaires/trust_hrts.csv`), so the existing analysis scripts apply unchanged.
