@@ -141,8 +141,10 @@ class SupplyController:
             self._emit(); self._replenish()
         elif topic == "robot.skill_failed":
             pid = (data.get("args") or {}).get("part_id")
+            pid_was_inflight = False
             with self._lock:
                 if pid and pid in self._inflight:
+                    pid_was_inflight = True
                     del self._inflight[pid]
                     protective_stop = data.get("protective_stop")
                     if protective_stop:
@@ -154,7 +156,8 @@ class SupplyController:
                     else:
                         # F1+F4: second failure → terminal
                         self._failed.add(pid)
-                self._blocked = None; self._blocked_published = False
+                    # N4: only reset blocked if we handled this pid
+                    self._blocked = None; self._blocked_published = False
             self._emit()
             # Always replenish to handle retry or blocked detection
             self._replenish()
@@ -184,6 +187,7 @@ class SupplyController:
 
     def _replenish(self, on_request: bool = False) -> None:
         decisions = []
+        to_publish_blocked = None
         with self._lock:
             if self._order is None:
                 return
@@ -192,7 +196,9 @@ class SupplyController:
             if budget == 0:
                 budget = 1 if (on_request or self._requests > len(self._supplied) + len(self._inflight)) else 0
 
-            # F5: on_request from recovery, prioritize current part even if at budget
+            # N3: Request-current rule (explicitly bypass lookahead for current part on wizard request).
+            # The current part is due on its turn, not ahead of the queue; serve it even at budget
+            # if not yet staged/inflight/failed. Requires a free slot. Publish as "request-current".
             if on_request and self._current_part_id:
                 for p in self._plan:
                     if p.id == self._current_part_id:
@@ -200,7 +206,7 @@ class SupplyController:
                             slot = self._free_slot()
                             if slot is not None:
                                 self._inflight[p.id] = slot
-                                decisions.append((p, slot, "recovery"))
+                                decisions.append((p, slot, "request-current"))
                                 ahead += 1
                         break
 
@@ -229,8 +235,7 @@ class SupplyController:
                 decisions.append((part, slot, "request" if on_request else f"lookahead={self.profile.lookahead}"))
                 ahead += 1
 
-            # F6: blocked detection
-            was_blocked = self._blocked is not None
+            # F6: blocked detection (N1: snapshot only, publish outside lock)
             new_blocked = None
             if self._current_part_id:
                 in_staged = any(pid == self._current_part_id for pid in self._staged.values())
@@ -248,23 +253,24 @@ class SupplyController:
 
             self._blocked = new_blocked
 
-        # Publish decisions
+            # N1: Snapshot for publishing; decide transition under lock
+            is_blocked = self._blocked is not None
+            if is_blocked and not self._blocked_published:
+                to_publish_blocked = dict(self._blocked)
+                self._blocked_published = True
+            elif not is_blocked and self._blocked_published:
+                self._blocked_published = False
+
+        # N1: Publish decisions and blocked outside the lock
         for part, slot, reason in decisions:
             self.bus.publish("supply.decision", {"part_id": part.id, "slot": slot, "reason": reason})
             self.bridge.supply(part.id, part.depot_slot, slot)
         if decisions:
             self._emit()
 
-        # F6: publish blocked event (once per transition, no spam)
-        with self._lock:
-            is_blocked = self._blocked is not None
-            if is_blocked and not self._blocked_published:
-                # Transition to blocked: publish
-                self.bus.publish("supply.blocked", self._blocked)
-                self._blocked_published = True
-            elif not is_blocked and self._blocked_published:
-                # Transition to unblocked
-                self._blocked_published = False
+        # N1: Publish blocked event outside lock (once per transition, no spam)
+        if to_publish_blocked is not None:
+            self.bus.publish("supply.blocked", to_publish_blocked)
 
     def _emit(self) -> None:
         self.bus.publish("supply.state", self.status())

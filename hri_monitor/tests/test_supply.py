@@ -107,6 +107,8 @@ def test_twice_failed_part_goes_terminal_and_is_not_repicked():
     """F1: twice-failed parts are terminal and never repicked"""
     from hub.kit_study.robotd.base import RobotError
     bus = MessageBus()
+    events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
     fails = {"n": 0}
     class Flaky(SimBackend):
         def pick(self, depot_slot):
@@ -135,6 +137,9 @@ def test_twice_failed_part_goes_terminal_and_is_not_repicked():
     # Should now clear failure and succeed on next attempt
     assert settle(bridge, ctrl, lambda s: "F1O1P1" in s["staged"].values(), timeout=4.0)
     assert ctrl.status()["blocked"] is None
+    # N3: check recovery decision reason is "request-current"
+    recovery_decisions = [d for t, d in events if t == "supply.decision" and d.get("part_id") == "F1O1P1" and d.get("reason") == "request-current"]
+    assert len(recovery_decisions) >= 1, "Recovery decision should have reason='request-current'"
     bridge.stop(); ctrl.stop()
 
 
@@ -220,18 +225,18 @@ def test_mat_full_with_unstaged_current_part_reports_blocked_and_slot_cleared_re
 
 
 def test_set_profile_does_not_hold_lock_while_submitting():
-    """F3: set_profile does not deadlock by holding lock during bridge.submit"""
+    """N2: set_profile does not deadlock by holding lock during bridge.submit"""
     import threading
     bus = MessageBus()
-    deadlocked = {"flag": False}
+    callback_results = {"status_returned": False}
 
     def status_on_skill_queued(m):
-        # This callback calls back into controller under lock if lock is held during submit
+        # N2: callback must call ctrl.status() to test the lock is released
         try:
-            # This would deadlock on non-reentrant lock if set_profile holds it
-            pass  # Just receiving the message is enough to trigger the issue
+            result = ctrl.status()
+            callback_results["status_returned"] = result is not None
         except:
-            deadlocked["flag"] = True
+            pass
 
     block = load_block(F1)
     bridge = RobotBridge(bus, SimBackend(timing=FAST, rng=random.Random(0)))
@@ -248,6 +253,44 @@ def test_set_profile_does_not_hold_lock_while_submitting():
     t.start()
     t.join(timeout=1.0)
 
-    # If thread is still alive, we deadlocked
+    # N2: if thread is still alive, we deadlocked
     assert not t.is_alive(), "set_profile deadlocked (lock held during bridge.submit)"
+    assert callback_results["status_returned"], "callback should have called ctrl.status() and returned"
+    bridge.stop(); ctrl.stop()
+
+
+def test_blocked_publish_does_not_hold_lock():
+    """N2: supply.blocked publish does not hold lock during publish"""
+    import threading
+    bus = MessageBus()
+    callback_results = {"status_returned": False}
+
+    def status_on_blocked(m):
+        # N2: blocked callback must call ctrl.status() to test the lock is released
+        try:
+            result = ctrl.status()
+            callback_results["status_returned"] = result is not None
+        except:
+            pass
+
+    block = load_block(F1)
+    bridge = RobotBridge(bus, SimBackend(timing=FAST, rng=random.Random(0)))
+    bridge.start()
+    bus.subscribe("supply.blocked", status_on_blocked)
+    ctrl = SupplyController(bus, bridge, block, SupplyProfile(lookahead=3))
+    ctrl.start()
+
+    # Trigger mat-full blocked scenario
+    bus.publish("task.order_started", {"order_id": "O3", "order_index": 2, "kind": "block", "n_parts": 9, "time_limit_s": 120})
+    assert settle(bridge, ctrl, lambda s: len(s["staged"]) == 3, timeout=2.0)
+
+    # Publish step making P9 current with all slots full → blocked event
+    bus.publish("task.step", {"step_index": 0, "part_id": "F1O3P9"})
+
+    # Wait for blocked event to be published and callback to run
+    assert settle(bridge, ctrl, lambda s: s["blocked"] is not None, timeout=2.0)
+    bridge.wait_idle(0.2)
+
+    # N2: callback should have run and called status() without deadlock
+    assert callback_results["status_returned"], "blocked callback should have called ctrl.status() and returned"
     bridge.stop(); ctrl.stop()
