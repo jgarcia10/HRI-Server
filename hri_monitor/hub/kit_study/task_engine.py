@@ -157,14 +157,19 @@ class TaskEngine:
         remaining = None
         if self._phase == "running" and order is not None:
             p = self._parts[self._step_i]
-            current = {"id": p.id, "type": p.type, "color": p.color, "depot_slot": p.depot_slot}
+            current = p.as_dict()
             if order.time_limit_s is not None:
                 remaining = max(0.0, order.time_limit_s - (self.now() - self._order_start))
         return {
             "phase": self._phase,
             "order_index": self._order_i,
             "order_id": order.id if order else None,
+            "order_name": order.name if order else None,
             "kind": order.kind if order else None,
+            # Full assembly sequence (after any perturbation swap) with placement geometry, so
+            # the participant screen can draw the figure, the built layers and the next brick.
+            "parts": [p.as_dict() for p in self._parts] if order else [],
+            "width_studs": order.width_studs if order else 0,
             "step_index": self._step_i,
             "n_parts": len(self._parts),
             "current_part": current,

@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 
-export type KitPart = { id: string; type: string; color: string; depot_slot: string };
+export type KitPart = {
+  id: string;
+  type: "1x2" | "1x1" | "slope" | string;
+  color: "red" | "orange" | "blue" | "seafoam" | "lime" | string;
+  depot_slot: string;
+  pos: [number, number]; // x in studs from the left, layer from the table
+  high: "left" | "right" | null; // slopes: side of the tall edge
+  width: number; // studs
+};
 export type KitTaskState = {
   phase: "idle" | "running" | "between_orders" | "done";
   order_index: number;
   order_id: string | null;
+  order_name: string | null;
   kind: string | null;
+  parts: KitPart[]; // assembly sequence (index = step), with placement geometry
+  width_studs: number;
   step_index: number;
   n_parts: number;
   current_part: KitPart | null;
