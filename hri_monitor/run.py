@@ -20,8 +20,9 @@ ROOT = Path(__file__).resolve().parent
 def main():
     parser = argparse.ArgumentParser(description="HRI Monitor")
     parser.add_argument("--no-browser", action="store_true", help="do not open the dashboard")
-    parser.add_argument("--mode", choices=["sim", "robot"], default="sim",
-                        help="robot backend: sim (no hardware) or robot (UR5 via ur_rtde)")
+    parser.add_argument("--mode", choices=["sim", "robot", "ursim"], default="sim",
+                        help="robot backend: sim (no hardware), robot (UR5 via ur_rtde), "
+                             "or ursim (URSim rehearsal, example calibration)")
     parser.add_argument("--robot-ip", default=None, help="override the UR5 IP from the mode file")
     args = parser.parse_args()
 

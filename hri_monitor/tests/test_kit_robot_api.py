@@ -1,4 +1,6 @@
+import logging
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,8 +8,12 @@ from fastapi.testclient import TestClient
 from hub.bus import MessageBus
 from hub.experiments.controller import RecordingController
 from hub.experiments.db import Database
-from hub.kit_study.runtime import build_backend, load_mode
+from hub.kit_study.robotd.base import RobotError
+from hub.kit_study.robotd.ur import URBackend
+from hub.kit_study.runtime import build_backend, load_mode, resolve_calibration_path
 from hub.server import create_app
+
+HRI_MONITOR_ROOT = Path(__file__).resolve().parent.parent
 
 
 class FakeManager:
@@ -87,3 +93,26 @@ def test_request_part_event_and_estop(client):
 
 def test_profile_requires_session(client):
     assert client.post("/api/kit/supply/profile", json={"lookahead": 1}).status_code == 409
+
+
+def test_robot_mode_fails_closed_without_taught_calibration(tmp_path):
+    missing = tmp_path / "missing.yaml"
+    cfg = load_mode("robot", overrides={"robot": {"calibration": str(missing)}})
+    with pytest.raises(RobotError):
+        build_backend(cfg)
+
+
+def test_ursim_mode_opts_into_example_calibration(tmp_path, caplog):
+    missing = tmp_path / "missing.yaml"
+    cfg = load_mode("ursim", overrides={"robot": {"calibration": str(missing)}})
+    with caplog.at_level(logging.WARNING):
+        backend = build_backend(cfg)  # must not attempt any network connection
+    assert isinstance(backend, URBackend)
+    assert any("EXAMPLE calibration" in r.message for r in caplog.records)
+
+
+def test_relative_calibration_path_resolves_against_hri_monitor_root():
+    cfg = load_mode("robot")
+    resolved = resolve_calibration_path(cfg)
+    assert resolved.is_absolute()
+    assert resolved == HRI_MONITOR_ROOT / "hub" / "kit_study" / "configs" / "calibration.yaml"
