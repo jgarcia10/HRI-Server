@@ -113,3 +113,64 @@ def test_teach_record_builds_calibration():
     cal = record(c, r, ["home", "transit", "L", "C", "R", "RD1"], prompt=lambda msg: "")
     assert set(cal["staging"]) == {"L", "C", "R"} and "RD1" in cal["depot"] and cal["home"]["q"] == Q
     assert [k[0] for k in c.calls].count("teach") == 6
+
+
+def test_gripper_command_failure_raises_and_keeps_state():
+    """Gripper command that returns False raises RobotError and keeps state unchanged."""
+    from hub.kit_study.robotd.base import RobotError
+    c, r = FakeControl(), FakeReceive()
+    io = FakeIO()
+    io.setToolDigitalOut = lambda out_id, level: False  # simulate gripper failure
+    b = URBackend("192.168.131.140", CAL, gripper_settle_s=0.0, rtde_factory=lambda ip: (c, r, io))
+    b.connect()
+    with pytest.raises(RobotError, match="gripper command refused"):
+        b.pick("RD1")
+    assert b.state().gripper_closed is False  # state unchanged
+    # No retreat moveL after gripper failure
+    kinds = [k[0] for k in c.calls]
+    assert kinds == ["moveJ", "ik", "moveJ", "moveL"]  # stops after down moveL
+
+
+def test_mid_motion_protective_stop_is_classified():
+    """Motion that fails with protective stop active is classified as ProtectiveStop."""
+    c, r = FakeControl(), FakeReceive()
+    io = FakeIO()
+    # Make moveL fail and set protective stop after the check
+    original_moveL = c.moveL
+    def moveL_then_stop(*args, **kwargs):
+        r.ps = True  # protective stop activates during motion
+        return False  # motion fails
+    c.moveL = moveL_then_stop
+    b = URBackend("192.168.131.140", CAL, gripper_settle_s=0.0, rtde_factory=lambda ip: (c, r, io))
+    b.connect()
+    with pytest.raises(ProtectiveStop, match="protective/emergency stop during motion"):
+        b.pick("RD1")
+
+
+def test_disconnect_closes_all_interfaces():
+    """disconnect() calls disconnect on all three interfaces (if they have it)."""
+    class TrackingControl(FakeControl):
+        def __init__(self):
+            super().__init__()
+            self.disconnect_called = False
+        def disconnect(self):
+            self.disconnect_called = True
+            super().disconnect()
+    class TrackingReceive(FakeReceive):
+        def __init__(self):
+            super().__init__()
+            self.disconnect_called = False
+        def disconnect(self):
+            self.disconnect_called = True
+    class TrackingIO(FakeIO):
+        def __init__(self):
+            super().__init__()
+            self.disconnect_called = False
+        def disconnect(self):
+            self.disconnect_called = True
+    c, r, io = TrackingControl(), TrackingReceive(), TrackingIO()
+    b = URBackend("192.168.131.140", CAL, gripper_settle_s=0.0, rtde_factory=lambda ip: (c, r, io))
+    b.connect()
+    b.disconnect()
+    assert c.disconnect_called and r.disconnect_called and io.disconnect_called
+    assert b.state().safety == "disconnected"

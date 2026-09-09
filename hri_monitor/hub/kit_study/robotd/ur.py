@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from .base import (PACE_LEVELS, RobotBackend, RobotError, ProtectiveStop, RobotState, STAGING_SLOTS,
+from .base import (RobotBackend, RobotError, ProtectiveStop, RobotState, STAGING_SLOTS,
                    validate_depot_slot, validate_pace, validate_staging_slot)
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
@@ -71,8 +71,23 @@ class URBackend(RobotBackend):
         if self.ctrl is not None:
             try:
                 self.ctrl.disconnect()
-            finally:
-                self.ctrl = self.recv = self.io = None
+            except Exception:
+                pass
+        if self.recv is not None:
+            try:
+                disconnect_fn = getattr(self.recv, "disconnect", None)
+                if disconnect_fn:
+                    disconnect_fn()
+            except Exception:
+                pass
+        if self.io is not None:
+            try:
+                disconnect_fn = getattr(self.io, "disconnect", None)
+                if disconnect_fn:
+                    disconnect_fn()
+            except Exception:
+                pass
+        self.ctrl = self.recv = self.io = None
 
     # ----------------------------------------------------------------- guards
     def _require(self) -> None:
@@ -89,11 +104,15 @@ class URBackend(RobotBackend):
     def _moveJ(self, q):
         sp = self._sp()
         if not self.ctrl.moveJ(list(q), sp["joint_v"], sp["joint_a"]):
+            if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
+                raise ProtectiveStop("protective/emergency stop during motion")
             raise RobotError("moveJ refused")
 
     def _moveL(self, pose):
         sp = self._sp()
         if not self.ctrl.moveL(list(pose), sp["lin_v"], sp["lin_a"]):
+            if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
+                raise ProtectiveStop("protective/emergency stop during motion")
             raise RobotError("moveL refused")
 
     def _approach_and(self, node: dict, close: bool) -> None:
@@ -105,7 +124,8 @@ class URBackend(RobotBackend):
         q_above = self.ctrl.getInverseKinematics(above, qnear=list(node["q"]))
         self._moveJ(q_above)
         self._moveL(pose)
-        self.io.setToolDigitalOut(GRIPPER_TOOL_DO, close)
+        if not self.io.setToolDigitalOut(GRIPPER_TOOL_DO, close):
+            raise RobotError("gripper command refused")
         self._gripper_closed = close
         if self.settle:
             self._sleep(self.settle)
@@ -138,7 +158,8 @@ class URBackend(RobotBackend):
 
     def open_gripper(self) -> None:
         def _open():
-            self.io.setToolDigitalOut(GRIPPER_TOOL_DO, False)
+            if not self.io.setToolDigitalOut(GRIPPER_TOOL_DO, False):
+                raise RobotError("gripper command refused")
             self._gripper_closed = False
             if self.settle:
                 self._sleep(self.settle)
