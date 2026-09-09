@@ -17,7 +17,22 @@ from hub.server import create_app
 ROOT = Path(__file__).resolve().parent
 
 
+def load_dotenv(path: Path) -> None:
+    """Export KEY=VALUE lines from a local, git-ignored `.env` (OpenAI key etc.).
+    Existing environment variables win; no dependency on python-dotenv."""
+    import os
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def main():
+    load_dotenv(ROOT / ".env")
     parser = argparse.ArgumentParser(description="HRI Monitor")
     parser.add_argument("--no-browser", action="store_true", help="do not open the dashboard")
     parser.add_argument("--mode", choices=["sim", "robot", "ursim"], default="sim",

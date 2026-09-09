@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  fetchPlan,
   matCleared,
   postEvent,
+  type Plan,
   robotConnect,
   robotHome,
   robotOpenGripper,
@@ -42,13 +44,27 @@ function blockedMessage(reason: string, needed: string | null): string {
 
 export function Runner() {
   const { task, robot, supply, connected } = useKitWs();
-  const [participant, setParticipant] = useState("P00");
+  const [participant, setParticipant] = useState("P01");
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [blockNo, setBlockNo] = useState<1 | 2>(1);
   const [condition, setCondition] = useState<"C0" | "C1">("C0");
   const [freeText, setFreeText] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const call = (fn: () => Promise<unknown>) => () =>
     fn().then(() => setError(null)).catch((e) => setError(String(e.message ?? e)));
+
+  // Counterbalancing: the participant code decides the group (condition order × kit family
+  // of block 1). The wizard picks block 1 or 2; condition + orders file follow the plan, but
+  // the condition stays editable as an explicit override.
+  useEffect(() => {
+    if (!participant) return;
+    fetchPlan(participant).then(setPlan).catch(() => setPlan(null));
+  }, [participant]);
+  const planned = plan?.blocks[blockNo - 1] ?? null;
+  useEffect(() => {
+    if (planned) setCondition(planned.condition);
+  }, [planned?.condition, planned]);
 
   // "active" tracks whether a session/recording exists (any phase but idle) — this is
   // what gates Start/Stop and the wizard controls. "done" still has an active session
@@ -69,6 +85,14 @@ export function Runner() {
                  onChange={(e) => setParticipant(e.target.value)} />
         </label>
         <label className="flex flex-col text-sm">
+          Block
+          <select className="rounded border bg-transparent p-1" value={blockNo}
+                  onChange={(e) => setBlockNo(Number(e.target.value) as 1 | 2)}>
+            <option value={1}>1 (first)</option>
+            <option value={2}>2 (second)</option>
+          </select>
+        </label>
+        <label className="flex flex-col text-sm">
           Condition
           <select className="rounded border bg-transparent p-1" value={condition}
                   onChange={(e) => setCondition(e.target.value as "C0" | "C1")}>
@@ -76,16 +100,49 @@ export function Runner() {
             <option>C1</option>
           </select>
         </label>
+        <div className="flex flex-col text-sm">
+          Kit family
+          <span className="p-1 font-mono">{planned?.family ?? "—"}</span>
+        </div>
         <button className="rounded bg-emerald-600 px-4 py-2 text-white disabled:opacity-40"
                 disabled={active}
-                onClick={call(() => startSession({ participant_code: participant, condition }))}>
-          Start block
+                onClick={call(() =>
+                  startSession({ participant_code: participant, condition, block: planned?.orders }),
+                )}>
+          Start block {blockNo}
         </button>
         <button className="rounded bg-red-600 px-4 py-2 text-white disabled:opacity-40"
-                disabled={!active} onClick={call(stopSession)}>
+                disabled={!active}
+                onClick={call(() => stopSession().then(() => { if (blockNo === 1) setBlockNo(2); }))}>
           Stop
         </button>
       </section>
+      {plan && (
+        <section className="glass p-4 text-sm">
+          <p className="text-slate-400">
+            Counterbalancing group {plan.group}/4 for {plan.participant}
+            {plan.number === null ? " (non-numeric code: stable hash)" : ""} · {plan.label}
+          </p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {plan.blocks.map((b) => (
+              <div key={b.block}
+                   className={`rounded border p-2 ${b.block === blockNo ? "border-emerald-500" : "opacity-60"}`}>
+                <div className="font-semibold">Block {b.block}</div>
+                <div>
+                  <b>{b.condition}</b>{" "}
+                  {b.condition === "C0"
+                    ? "— LLM + RLHF baseline (whole block in context)"
+                    : "— LLM + homeostatic/allostatic meta-RL"}
+                </div>
+                <div className="font-mono text-slate-400">{b.family} · {b.orders}</div>
+              </div>
+            ))}
+          </div>
+          {planned && planned.condition !== condition && (
+            <p className="mt-2 text-amber-500">Override: plan says {planned.condition}, you selected {condition}.</p>
+          )}
+        </section>
+      )}
 
       <section className="glass p-4">
         <p className="text-sm text-slate-400">

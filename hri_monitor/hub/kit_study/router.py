@@ -41,6 +41,11 @@ def build_kit_router(session: KitSession, bus, bridge=None) -> APIRouter:
     def stop():
         return session.stop() or {"ok": True}
 
+    @r.get("/api/kit/plan/{participant_code}")
+    def plan(participant_code: str):
+        from .plan import assign
+        return assign(participant_code)
+
     @r.get("/api/kit/state")
     def state():
         return {"session": session.status()}

@@ -21,8 +21,15 @@ const PAGES = [
 ] as const;
 type Page = (typeof PAGES)[number]["name"];
 
+// `?page=Kit%20Study` opens a page directly (lab bookmarks, headless screenshots).
+function initialPage(): Page {
+  const wanted = new URLSearchParams(window.location.search).get("page");
+  const hit = PAGES.find((p) => p.name === wanted);
+  return hit ? hit.name : "Live";
+}
+
 export default function App() {
-  const [page, setPage] = useState<Page>("Live");
+  const [page, setPage] = useState<Page>(initialPage);
   const { pref, resolved, cycle } = useTheme();
   const ThemeIcon = pref === "system" ? Monitor : resolved === "dark" ? Moon : Sun;
 

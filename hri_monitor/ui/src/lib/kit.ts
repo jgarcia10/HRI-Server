@@ -135,6 +135,10 @@ export const startSession = (body: {
   profile?: Partial<SupplyState["profile"]>;
 }) => post("/api/kit/session/start", body);
 export const stopSession = () => post("/api/kit/session/stop");
+export type PlanBlock = { block: 1 | 2; condition: "C0" | "C1"; family: "F1" | "F2"; orders: string };
+export type Plan = { participant: string; number: number | null; group: number; blocks: PlanBlock[]; label: string };
+export const fetchPlan = (participant: string): Promise<Plan> =>
+  fetch(`/api/kit/plan/${encodeURIComponent(participant)}`).then((r) => r.json());
 export const postEvent = (type: string, payload: Record<string, unknown> = {}) =>
   post("/api/kit/event", { type, payload });
 export const matCleared = () => postEvent("mat_cleared");

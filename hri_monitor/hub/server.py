@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -94,6 +95,11 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         if "cache_dir" in llm_cfg:
             backend_kwargs["cache_dir"] = llm_cfg["cache_dir"]
         provider = llm_cfg.get("provider", "mock")
+        if provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
+            # Rehearsals without a key must still run; the CSV then carries mock anima rows.
+            log.warning("llm.yaml provider=openai but OPENAI_API_KEY is not set — "
+                        "falling back to the mock backend (put the key in hri_monitor/.env)")
+            provider = "mock"
         if provider == "openai":
             if "timeout_s" in llm_cfg:
                 backend_kwargs["timeout_s"] = float(llm_cfg["timeout_s"])
