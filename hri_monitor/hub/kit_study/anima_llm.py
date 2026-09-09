@@ -56,13 +56,14 @@ class AnimaLLM:
             epoch = self._epoch
             self._turns.clear(); self._human_turns = 0; self._judgements = 0
         # Drop any jobs enqueued before this reset (they carry the stale epoch); keep
-        # anything concurrently enqueued under the new epoch. In-flight jobs (already
-        # dequeued by the worker) are caught by the epoch re-check in `_loop`.
+        # anything concurrently enqueued under the new epoch and the `None` shutdown
+        # sentinel from `stop()`. In-flight jobs (already dequeued by the worker) are
+        # caught by the epoch re-check in `_loop`.
         pending = []
         try:
             while True:
                 item = self._q.get_nowait()
-                if item is not None and item[1] == epoch:
+                if item is None or item[1] == epoch:
                     pending.append(item)
         except queue.Empty:
             pass

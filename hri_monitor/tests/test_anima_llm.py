@@ -126,11 +126,27 @@ def test_reset_drops_queued_but_not_started_job():
         a.reset()
         backend.release.set()  # release the first (stale, in-flight) call
         time.sleep(0.3)
-        # Neither the discarded in-flight job nor the drained queued job publishes.
-        assert not any(t == "anima.perception" for t, _ in events)
-        assert a.status()["turns"] == 0
+        # Neither the discarded in-flight job nor the drained queued jobs (the second
+        # speech also enqueued a judge job, judge_every=2) publish anything.
+        assert not any(t in ("anima.perception", "anima.verdict") for t, _ in events)
+        assert a.status()["turns"] == 0 and a.status()["judgements"] == 0
     finally:
         a.stop()
+
+
+def test_reset_drain_keeps_stop_sentinel_and_fresh_jobs():
+    # Worker not started: exercise the drain directly. If reset() swallowed the None
+    # sentinel from stop(), an idle worker blocked in get() would never exit.
+    a = AnimaLLM(MessageBus(), BlockingBackend(), mission="supply kit parts")
+    stale_epoch = a._epoch
+    a._q.put(("perceive", stale_epoch, "stale"))
+    a._q.put(None)
+    a._q.put(("perceive", stale_epoch + 1, "fresh"))
+    a.reset()
+    left = []
+    while not a._q.empty():
+        left.append(a._q.get_nowait())
+    assert left == [None, ("perceive", stale_epoch + 1, "fresh")]
 
 
 def test_normal_job_after_reset_still_publishes():
