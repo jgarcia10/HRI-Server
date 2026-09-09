@@ -123,7 +123,9 @@ def test_twice_failed_part_goes_terminal_and_is_not_repicked():
     ctrl = SupplyController(bus, bridge, block, SupplyProfile(lookahead=2)); ctrl.start()
     eng.start_block()
     # After first two failures, P1 should be terminal (not retried again)
-    assert settle(bridge, ctrl, lambda s: "F1O1P1" in s["failed"], timeout=4.0)
+    # `failed` is set under the lock and `blocked` derived in the following
+    # _replenish(); wait for both so status() is not sampled in between.
+    assert settle(bridge, ctrl, lambda s: "F1O1P1" in s["failed"] and s["blocked"] is not None, timeout=4.0)
     st = ctrl.status()
     assert st["failed"] == ["F1O1P1"]
     assert st["blocked"] is not None
