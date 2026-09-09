@@ -1,9 +1,18 @@
 """HTTP API for the kit study: session lifecycle + wizard events."""
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from .session import KitSession
+
+
+class QuestionnaireIn(BaseModel):
+    instrument: str
+    answers: dict
+
+
+class SkipIn(BaseModel):
+    reason: str | None = None
 
 
 class SessionStartIn(BaseModel):
@@ -45,6 +54,37 @@ def build_kit_router(session: KitSession, bus, bridge=None) -> APIRouter:
     def plan(participant_code: str):
         from .plan import assign
         return assign(participant_code)
+
+    # ---- post-block questionnaires (NASA-TLX + trust), answered on the participant screen
+    @r.get("/api/kit/questionnaire")
+    def questionnaire_state():
+        return session.questionnaire_state()
+
+    @r.post("/api/kit/questionnaire")
+    def questionnaire_submit(body: QuestionnaireIn):
+        try:
+            return session.submit_questionnaire(body.instrument, body.answers)
+        except ValueError as e:
+            return JSONResponse({"detail": str(e)}, status_code=400)
+        except RuntimeError as e:
+            return JSONResponse({"detail": str(e)}, status_code=409)
+
+    @r.post("/api/kit/questionnaire/skip")
+    def questionnaire_skip(body: SkipIn | None = None):
+        return session.skip_questionnaires((body.reason if body else None) or "skipped by wizard")
+
+    @r.get("/api/kit/questionnaires")
+    def questionnaires_list(instrument: str | None = None):
+        return session.list_questionnaires(instrument)
+
+    @r.get("/api/kit/questionnaires/{instrument}.csv")
+    def questionnaires_csv(instrument: str):
+        from .questionnaires import INSTRUMENTS, to_csv
+        if instrument not in INSTRUMENTS:
+            return JSONResponse({"detail": f"unknown instrument {instrument}"}, status_code=404)
+        body = to_csv(instrument, session.list_questionnaires(instrument))
+        return Response(content=body, media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{instrument}.csv"'})
 
     @r.get("/api/kit/state")
     def state():

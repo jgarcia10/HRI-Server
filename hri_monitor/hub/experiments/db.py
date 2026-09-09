@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS marker (
   id INTEGER PRIMARY KEY, recording_id INTEGER NOT NULL, t_offset REAL NOT NULL,
   label TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'button',
   FOREIGN KEY (recording_id) REFERENCES recording(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS questionnaire (
+  id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL, recording_id INTEGER,
+  condition_id INTEGER NOT NULL, instrument TEXT NOT NULL, answers_json TEXT NOT NULL,
+  score REAL, created_at REAL NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE,
+  FOREIGN KEY (recording_id) REFERENCES recording(id) ON DELETE SET NULL,
+  FOREIGN KEY (condition_id) REFERENCES condition(id) ON DELETE CASCADE);
 """
 
 
@@ -224,6 +231,41 @@ class Database:
                 "INSERT INTO marker (recording_id, t_offset, label, source) VALUES (?,?,?,?)",
                 (rec_id, t_offset, label, source))
             return cur.lastrowid
+
+    # ---- questionnaires (post-block self-reports) ---------------------------
+    def add_questionnaire(self, session_id, condition_id, instrument, answers, score,
+                          recording_id=None):
+        import json
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO questionnaire (session_id, recording_id, condition_id, instrument, "
+                "answers_json, score, created_at) VALUES (?,?,?,?,?,?,?)",
+                (session_id, recording_id, condition_id, instrument, json.dumps(answers),
+                 score, time.time()))
+            return cur.lastrowid
+
+    def list_questionnaires(self, experiment_id=None, instrument=None):
+        """Rows with participant code and condition name, oldest first."""
+        import json
+        sql = ("SELECT q.*, p.code AS participant_code, cond.name AS condition_name "
+               "FROM questionnaire q JOIN session s ON q.session_id = s.id "
+               "JOIN participant p ON s.participant_id = p.id "
+               "JOIN condition cond ON q.condition_id = cond.id")
+        where, args = [], []
+        if experiment_id is not None:
+            where.append("s.experiment_id=?"); args.append(experiment_id)
+        if instrument is not None:
+            where.append("q.instrument=?"); args.append(instrument)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY q.created_at"
+        with self._conn() as c:
+            out = []
+            for r in c.execute(sql, args):
+                d = dict(r)
+                d["answers"] = json.loads(d.pop("answers_json"))
+                out.append(d)
+            return out
 
     def reconcile_active_recordings(self):
         with self._conn() as c:

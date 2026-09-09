@@ -146,6 +146,10 @@ def test_reuses_existing_experiment(stack):
     bus, db, ctrl, sess = stack
     sess.start("P01", "C0", "orders_f1.yaml")
     sess.stop()
+    # a stopped block leaves its questionnaires pending; the next block waits for them
+    with pytest.raises(RuntimeError, match="questionnaires pending"):
+        sess.start("P01", "C1", "orders_f1.yaml")
+    sess.skip_questionnaires("test")
     sess.start("P01", "C1", "orders_f1.yaml")
     assert len([e for e in db.list_experiments() if e["name"] == EXPERIMENT_NAME]) == 1
     sess.stop()
@@ -233,8 +237,10 @@ def test_stop_does_not_kill_an_unrelated_recording(stack):
     assert out.get("recording_id") is None      # our stop() skipped controller.stop()
     assert sess._info is None and sess.engine is None
 
-    # Once that unrelated recording is stopped, a fresh session starts cleanly.
+    # Once that unrelated recording is stopped (and the post-block questionnaires are
+    # dealt with), a fresh session starts cleanly.
     ctrl.stop()
+    sess.skip_questionnaires("test")
     info2 = sess.start("P08", "C0", "orders_f1.yaml")
     assert info2["recording_id"] is not None
     sess.stop()

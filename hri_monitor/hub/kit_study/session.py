@@ -7,6 +7,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import questionnaires as q13s
 from .orders import load_block
 from .task_engine import TaskEngine
 
@@ -63,12 +64,22 @@ class KitSession:
         self._info = None
         self._ticker = None
         self._stop_evt = threading.Event()
+        # Post-block questionnaires: set when a block stops, cleared when both instruments are
+        # answered (or the wizard skips). The next block cannot start while it is pending, so
+        # no condition ends up without its NASA-TLX / trust answers by accident.
+        self._pending_q: dict | None = None
+        self._last_q: dict | None = None
 
     # ---------------------------------------------------------------- public
     def start(self, participant_code: str, condition: str, block: str,
               profile: dict | None = None) -> dict:
         if self._info is not None:
             raise RuntimeError("a kit session is already active")
+        if self._pending_q is not None:
+            raise RuntimeError("questionnaires pending: the participant has not answered the "
+                               f"post-block questionnaires for {self._pending_q['participant']} / "
+                               f"{self._pending_q['condition']} yet (answer them on the participant "
+                               "screen, or skip them from the wizard)")
         if self.bridge is not None and (self.bridge.queue_size() or self.bridge.busy()):
             # I3: a job left over from the previous session would stage a part into this one
             raise RuntimeError("robot busy: a previous robot job is still running — "
@@ -138,6 +149,7 @@ class KitSession:
             out = None
         info, self._info, self.engine = self._info, None, None
         self.bus.publish("task.state", _idle_task_state(block))
+        self._open_questionnaires(info)
         return {**(out or {}), "condition": info["condition"]}
 
     def status(self):
@@ -146,6 +158,72 @@ class KitSession:
         return {**self._info, "task": self.engine.state(),
                 "supply": self.supply.status() if self.supply else None,
                 "anima": self.anima_llm.status() if self.anima_llm else None}
+
+    # ------------------------------------------------------- questionnaires
+    def questionnaire_state(self) -> dict:
+        """Streamed as `kit.questionnaire`; the participant screen renders the pending one."""
+        if self._pending_q is not None:
+            return {"status": "pending", **self._pending_q,
+                    "instruments": q13s.INSTRUMENTS, "order": list(q13s.ORDER)}
+        if self._last_q is not None:
+            return {"status": "done", **self._last_q}
+        return {"status": "none"}
+
+    def submit_questionnaire(self, instrument: str, answers: dict) -> dict:
+        if self._pending_q is None:
+            raise RuntimeError("no questionnaire pending")
+        if self._pending_q["done"].get(instrument):
+            raise RuntimeError(f"{instrument} already answered for this block")
+        clean = q13s.validate(instrument, answers)
+        sc = q13s.score(instrument, clean)
+        self.db.add_questionnaire(self._pending_q["session_id"], self._pending_q["condition_id"],
+                                  instrument, clean, sc, self._pending_q.get("recording_id"))
+        self._pending_q["done"][instrument] = sc
+        self._pending_q["next"] = next((i for i in q13s.ORDER if not self._pending_q["done"].get(i)),
+                                       None)
+        self.bus.publish("kit.questionnaire_answered", {"instrument": instrument, "score": sc,
+                                                        **{k: self._pending_q[k] for k in
+                                                           ("participant", "condition", "session_id")}})
+        if self._pending_q["next"] is None:
+            self._close_questionnaires("completed")
+        self._publish_q()
+        return self.questionnaire_state()
+
+    def skip_questionnaires(self, reason: str = "skipped by wizard") -> dict:
+        if self._pending_q is None:
+            return self.questionnaire_state()
+        for instrument in q13s.ORDER:
+            if not self._pending_q["done"].get(instrument):
+                self.db.add_questionnaire(self._pending_q["session_id"],
+                                          self._pending_q["condition_id"], instrument,
+                                          {"skipped": reason}, None,
+                                          self._pending_q.get("recording_id"))
+        self._close_questionnaires("skipped")
+        self._publish_q()
+        return self.questionnaire_state()
+
+    def _open_questionnaires(self, info: dict) -> None:
+        exp_id = self._ensure_experiment()
+        self._pending_q = {"session_id": info["session_id"], "recording_id": info.get("recording_id"),
+                           "condition_id": self._condition_id(exp_id, info["condition"]),
+                           "participant": info["participant"], "condition": info["condition"],
+                           "block": info.get("block"), "done": {}, "next": q13s.ORDER[0]}
+        self._publish_q()
+
+    def _close_questionnaires(self, outcome: str) -> None:
+        p = self._pending_q
+        self._last_q = {"participant": p["participant"], "condition": p["condition"],
+                        "session_id": p["session_id"], "done": dict(p["done"]), "outcome": outcome}
+        self._pending_q = None
+
+    def _publish_q(self) -> None:
+        self.bus.publish("kit.questionnaire", self.questionnaire_state())
+
+    def list_questionnaires(self, instrument: str | None = None) -> list[dict]:
+        exp = next((e for e in self.db.list_experiments() if e["name"] == EXPERIMENT_NAME), None)
+        if exp is None:
+            return []
+        return self.db.list_questionnaires(exp["id"], instrument)
 
     # --------------------------------------------------------------- private
     def _tick_loop(self):

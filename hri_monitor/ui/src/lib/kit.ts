@@ -64,10 +64,46 @@ export type SupplyState = {
   } | null;
 };
 
+export type QuestionnaireItem = {
+  key: string;
+  label: string;
+  question: string;
+  low: string;
+  high: string;
+};
+export type Instrument = {
+  title: string;
+  scale: { min: number; max: number; step: number };
+  score: string;
+  items: QuestionnaireItem[];
+};
+export type QuestionnaireState =
+  | { status: "none" }
+  | {
+      status: "pending";
+      session_id: number;
+      participant: string;
+      condition: string;
+      block: string | null;
+      done: Record<string, number>;
+      next: "nasa_tlx" | "trust_hrts" | null;
+      instruments: Record<string, Instrument>;
+      order: string[];
+    }
+  | {
+      status: "done";
+      participant: string;
+      condition: string;
+      session_id: number;
+      done: Record<string, number>;
+      outcome: "completed" | "skipped";
+    };
+
 export function useKitWs() {
   const [task, setTask] = useState<KitTaskState | null>(null);
   const [robot, setRobot] = useState<RobotState | null>(null);
   const [supply, setSupply] = useState<SupplyState | null>(null);
+  const [questionnaire, setQuestionnaire] = useState<QuestionnaireState>({ status: "none" });
   const [connected, setConnected] = useState(false);
   const retry = useRef<ReturnType<typeof setTimeout>>();
 
@@ -98,6 +134,12 @@ export function useKitWs() {
         if (d && d.profile) setSupply(d as SupplyState);
       })
       .catch(() => {});
+    fetch("/api/kit/questionnaire")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.status) setQuestionnaire(d as QuestionnaireState);
+      })
+      .catch(() => {});
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -114,6 +156,9 @@ export function useKitWs() {
           if (msg.items?.["supply.state"]) {
             setSupply(msg.items["supply.state"].data as SupplyState);
           }
+          if (msg.items?.["kit.questionnaire"]) {
+            setQuestionnaire(msg.items["kit.questionnaire"].data as QuestionnaireState);
+          }
         }
       };
       ws.onclose = () => {
@@ -128,8 +173,13 @@ export function useKitWs() {
       ws?.close();
     };
   }, []);
-  return { task, robot, supply, connected };
+  return { task, robot, supply, questionnaire, connected };
 }
+
+export const submitQuestionnaire = (instrument: string, answers: Record<string, number>) =>
+  post("/api/kit/questionnaire", { instrument, answers });
+export const skipQuestionnaires = (reason?: string) =>
+  post("/api/kit/questionnaire/skip", { reason: reason ?? null });
 
 const post = (url: string, body?: unknown) =>
   fetch(url, {

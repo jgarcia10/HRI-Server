@@ -24,7 +24,7 @@ STREAM_TOPICS = {
     "ppg.hr", "ppg.hrv", "model.estimates", "task.state", "robot.state", "supply.state",
     "anima.perception", "anima.verdict",
     "robot.rejected", "robot.resumed", "robot.estop", "supply.blocked",
-    "wizard.mat_cleared",
+    "wizard.mat_cleared", "kit.questionnaire",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
