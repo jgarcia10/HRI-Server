@@ -79,6 +79,14 @@ export function useKitWs() {
         if (d) setRobot(d as RobotState);
       })
       .catch(() => {});
+    // supply.state is only streamed on change: a wizard page opened mid-session would show
+    // empty staging slots until the next robot event without this seed.
+    fetch("/api/kit/supply/state")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && d.profile) setSupply(d as SupplyState);
+      })
+      .catch(() => {});
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${proto}://${location.host}/ws`);
