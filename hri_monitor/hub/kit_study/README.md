@@ -25,7 +25,8 @@ chosen mode file.
 
 - `sim` — scripted `SimBackend`, no hardware, no calibration file needed.
 - `ursim` — real `URBackend` over `ur_rtde` against a Docker URSim at `127.0.0.1`; runs with
-  the placeholder `configs/calibration.example.yaml` (`allow_example_calibration: true`).
+  the placeholder `configs/calibration.example.yaml` (`allow_example_calibration: true`; all 14 depot
+  slots on an arbitrary grid — validates motion/RTDE, not table geometry).
 - `robot` — real `URBackend` against the lab UR5. **Fail-closed**: refuses to start unless
   `hub/kit_study/configs/calibration.yaml` (taught poses) exists — it never falls back to the
   example calibration on the real robot.

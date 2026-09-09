@@ -30,8 +30,11 @@ running.
 
 `configs/mode/ursim.yaml` points at `ip: 127.0.0.1` and sets `allow_example_calibration: true`,
 so it runs the real `URBackend` against URSim using the placeholder poses in
-`configs/calibration.example.yaml` — no taught calibration required. `--mode robot` refuses
-this shortcut (see section C.4).
+`configs/calibration.example.yaml` — no taught calibration required. The example file defines
+home/transit, the three staging slots and all 14 depot slots on a placeholder grid, so a whole
+block can be rehearsed; the poses are arbitrary and only meaningful inside URSim (they validate
+connectivity, RTDE motion and the pick/place/gripper sequence, never table geometry). `--mode
+robot` refuses this shortcut (see section C.4).
 
 ## C. Lab: UR5 (192.168.131.140, wired Ethernet from this PC)
 
@@ -52,7 +55,7 @@ this shortcut (see section C.4).
             RD1 RD2 RD3 OR1 OR2 OR3 BL1 BL2 SF1 SF2 SF3 LM1 LM2 LM3
 
     (`home transit L C R` plus every depot slot named across `orders_f1.yaml` and
-    `orders_f2.yaml`, verified with `grep -h depot_slot configs/orders_f*.yaml`: RD1-3, OR1-3,
+    `orders_f2.yaml`, verified with `grep -h depot_slot hub/kit_study/configs/orders_f*.yaml`: RD1-3, OR1-3,
     BL1-2, SF1-3, LM1-3.) Grasp pose = jaws around the brick below the stud, gripper open.
  5. Bench (spec M4 exit): `run.py --mode robot`; from the wizard: Home, then start a block with
     a team member placing parts; log ≥ 40 supply cycles; require ≥95% success, cycle ≤ 5 s p95
