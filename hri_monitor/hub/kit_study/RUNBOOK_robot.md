@@ -28,14 +28,29 @@ All commands run from `hri_monitor/` unless noted. `run.py` takes `--mode sim|ro
 
 ## B. Dev laptop: URSim rehearsal (Docker)
 
-    docker run --rm -it -p 5900:5900 -p 6080:6080 -p 29999:29999 -p 30001-30004:30001-30004 \
-        universalrobots/ursim_e-series:5.26          # (use universalrobots/ursim_cb3:3.15 for a CB3 UR5)
+Verified recipe (2026-09-09, this laptop). Two gotchas: `ur_rtde`'s control script makes the
+robot connect *back* to the client, so plain `-p` port mapping fails with "Failed to start RTDE
+data synchronization" — use `--net=host`; and with host networking the container's `Xvfb :1`
+collides with the laptop's own X display `:1`, so the display is renumbered:
 
-Open `http://localhost:6080/vnc.html` → power on → brake release → Settings → System →
-Remote Control: enable, then switch to Remote (e-Series). CB3: just have no local program
-running.
+    docker run -d --name ursim --net=host -e ROBOT_MODEL=UR5 -e DISPLAY=:9 --entrypoint bash \
+        universalrobots/ursim_e-series:5.26 \
+        -c "sed -i 's/Xvfb :1/Xvfb :9/; s/-display :1/-display :9/' /entrypoint.sh && exec /entrypoint.sh"
+    # (universalrobots/ursim_cb3:3.15 for a CB3 UR5; CB3 needs no Remote Control step)
 
-    URSIM_IP=127.0.0.1 .venv/bin/pytest tests/test_ursim_optional.py -q
+Power on without the GUI, via the dashboard server (wait ~10 s for it to answer):
+
+    printf 'power on\n' | nc -q1 127.0.0.1 29999; sleep 8
+    printf 'brake release\n' | nc -q1 127.0.0.1 29999; sleep 8
+    printf 'robotmode\nis in remote control\n' | nc -q1 127.0.0.1 29999   # RUNNING / false
+
+e-Series only — Remote Control must be switched on in the GUI once per container:
+`http://localhost:6080/vnc.html` (or any VNC client on `:5900`) → "Confirm Safety Configuration"
+→ dismiss "Getting Started" → ☰ → Settings → System → Remote Control → **Enable** → Exit →
+click the new **Local** icon in the top bar → **Remote Control**. The dashboard now answers
+`is in remote control: true`; `RTDEReceive` works without this step, `RTDEControl` does not.
+
+    URSIM_IP=127.0.0.1 .venv/bin/pytest tests/test_ursim_optional.py -q   # connect, home, gripper
     .venv/bin/python run.py --no-browser --mode ursim   # sim robot, real ur_rtde backend
 
 `configs/mode/ursim.yaml` points at `ip: 127.0.0.1` and sets `allow_example_calibration: true`,
