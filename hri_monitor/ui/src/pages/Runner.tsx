@@ -1,10 +1,19 @@
 import { useState } from "react";
-import { postEvent, startSession, stopSession, useKitWs } from "../lib/kit";
+import {
+  postEvent,
+  robotHome,
+  robotOpenGripper,
+  robotStop,
+  setSupplyProfile,
+  startSession,
+  stopSession,
+  useKitWs,
+} from "../lib/kit";
 
 const SPEECH = ["wait", "faster", "slower", "give me the red one", "put it on the left"];
 
 export function Runner() {
-  const { task, connected } = useKitWs();
+  const { task, robot, supply, connected } = useKitWs();
   const [participant, setParticipant] = useState("P00");
   const [condition, setCondition] = useState<"C0" | "C1">("C0");
   const [freeText, setFreeText] = useState("");
@@ -55,7 +64,8 @@ export function Runner() {
           {task
             ? `phase=${task.phase} · order=${task.order_id ?? "—"} (${task.kind ?? "—"}) · ` +
               `step ${task.step_index + 1}/${task.n_parts} · ` +
-              `remaining ${task.remaining_s ?? "—"}s`
+              `remaining ${task.remaining_s ?? "—"}s` +
+              (supply?.failed && supply.failed.length > 0 ? ` · failed: ${supply.failed.join(", ")}` : "")
             : "no task state yet"}
         </p>
         {task?.current_part && (
@@ -64,6 +74,78 @@ export function Runner() {
             (slot {task.current_part.depot_slot})
           </p>
         )}
+      </section>
+
+      <section className="glass p-4">
+        <div className="flex items-center gap-3">
+          <span className={`inline-block h-3 w-3 rounded-full ${robot?.safety === "normal" ? "bg-emerald-500" : "bg-red-500"}`} />
+          <p className="text-sm">
+            Robot: <b>{robot?.backend ?? "—"}</b> · {robot?.connected ? "connected" : "disconnected"} ·
+            safety {robot?.safety ?? "—"} · {robot?.busy ? "busy" : "idle"} · queue {robot?.queue ?? 0} ·
+            gripper {robot?.gripper_closed ? "closed" : "open"} · pace {robot?.pace ?? "—"}
+          </p>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className="rounded bg-slate-600 px-3 py-2 text-white" onClick={call(robotHome)}>Home</button>
+          <button className="rounded bg-slate-600 px-3 py-2 text-white" onClick={call(robotOpenGripper)}>Open gripper</button>
+          <button className="rounded bg-red-700 px-5 py-2 text-lg font-bold text-white" onClick={call(robotStop)}>■ STOP robot</button>
+        </div>
+      </section>
+
+      <section className="glass p-4">
+        <p className="mb-2 text-sm text-slate-400">Supply profile (live) · next: {supply?.next_part_id ?? "—"}</p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col text-sm">Look-ahead
+            <select className="rounded border bg-transparent p-1" value={supply?.profile.lookahead ?? 1}
+                    disabled={!active} onChange={(e) => call(() => setSupplyProfile({ lookahead: Number(e.target.value) }))()}>
+              {[0, 1, 2, 3].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col text-sm">Side
+            <select className="rounded border bg-transparent p-1" value={supply?.profile.side ?? "C"}
+                    disabled={!active} onChange={(e) => call(() => setSupplyProfile({ side: e.target.value }))()}>
+              {["L", "C", "R"].map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col text-sm">Pace
+            <select className="rounded border bg-transparent p-1" value={supply?.profile.pace ?? "normal"}
+                    disabled={!active} onChange={(e) => call(() => setSupplyProfile({ pace: e.target.value }))()}>
+              {["slow", "normal"].map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </label>
+          <button className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-40"
+                  disabled={!active || ((supply?.profile.lookahead ?? 1) !== 0 && supply?.blocked?.reason !== "part_failed")}
+                  onClick={call(() => postEvent("request_part"))}>
+            Request next part
+          </button>
+        </div>
+        {supply?.blocked && (
+          <div className="mt-3 rounded bg-amber-500/20 px-3 py-2 text-sm text-amber-600">
+            ⚠ Supply blocked: {supply.blocked.reason} — needed part {supply.blocked.needed}
+            <div className="mt-2 flex gap-2">
+              <button className="rounded bg-amber-600 px-3 py-1 text-sm text-white" disabled={!active}
+                      onClick={call(() => postEvent("slot_cleared", { slot: "L" }))}>
+                Slot cleared L
+              </button>
+              <button className="rounded bg-amber-600 px-3 py-1 text-sm text-white" disabled={!active}
+                      onClick={call(() => postEvent("slot_cleared", { slot: "C" }))}>
+                Slot cleared C
+              </button>
+              <button className="rounded bg-amber-600 px-3 py-1 text-sm text-white" disabled={!active}
+                      onClick={call(() => postEvent("slot_cleared", { slot: "R" }))}>
+                Slot cleared R
+              </button>
+            </div>
+          </div>
+        )}
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {(["L", "C", "R"] as const).map((slot) => (
+            <div key={slot} className="rounded border p-2 text-center text-sm">
+              <div className="text-slate-400">{slot}</div>
+              <div className="font-mono">{supply?.staged?.[slot] ?? (supply?.inflight?.length ? "…" : "—")}</div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="glass flex flex-wrap gap-3 p-4">
