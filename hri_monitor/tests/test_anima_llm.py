@@ -1,10 +1,37 @@
+import threading
 import time
 
 from anima.llm.backend import MockBackend
+from anima.llm.schema import Usage
 
 from hub.bus import MessageBus
 from hub.experiments.signals import RECORDED_TOPICS, sample_rows
 from hub.kit_study.anima_llm import AnimaLLM
+
+
+class BlockingBackend:
+    """Fake backend whose `structured()` blocks on an Event until the test releases it,
+    so tests can control exactly when an in-flight perceive/judge call "returns"."""
+
+    def __init__(self):
+        self.usage = Usage()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def structured(self, system, prompt, schema, *, max_tokens=1024, effort="low", salt=""):
+        self.entered.set()
+        self.release.wait(timeout=5.0)
+        props = schema.get("properties", {})
+        if "mission_score" in props:  # judge
+            return {"mission_score": 0.8, "rationale": "blocked judge"}
+        from anima.config import DRIVE_NAMES  # perceive
+        out = {f"{n}_pull": 0.5 for n in DRIVE_NAMES}
+        out.update(regime="supportive", regime_confidence=0.9, intensity=0.5,
+                    rationale="blocked perception")
+        return out
+
+    def text(self, system, prompt, *, max_tokens=512, effort="low", salt=""):
+        return "ok"
 
 
 def make(judge_every=2):
@@ -61,3 +88,58 @@ def test_reset_clears_turns_and_signals():
                                                   "intensity": 0.6, "rationale": "x"}))
     assert rows["anima.relatedness_pull"] == 0.8 and rows["anima.regime_idx"] == 1.0 and rows["anima.intensity"] == 0.6
     assert sample_rows("anima.verdict", {"g": -0.2, "rationale": "x"}) == [("anima.g", -0.2)]
+
+
+def test_reset_discards_in_flight_job_result():
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    backend = BlockingBackend()
+    a = AnimaLLM(bus, backend, mission="supply kit parts")
+    a.start()
+    try:
+        bus.publish("wizard.speech", {"text": "hi"})
+        # Wait for the worker to actually enter the (blocking) backend call, i.e. the
+        # job is genuinely in flight, not merely sitting in the queue.
+        assert backend.entered.wait(timeout=3.0)
+        a.reset()
+        backend.release.set()  # let the stale in-flight call "return" now
+        # Give the worker a chance to process the (now-stale) result.
+        time.sleep(0.3)
+        assert not any(t == "anima.perception" for t, _ in events)
+        assert a.status()["turns"] == 0
+    finally:
+        a.stop()
+
+
+def test_reset_drops_queued_but_not_started_job():
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    backend = BlockingBackend()
+    a = AnimaLLM(bus, backend, mission="supply kit parts")
+    a.start()
+    try:
+        # First speech enters the blocking backend call, occupying the worker thread.
+        bus.publish("wizard.speech", {"text": "hi"})
+        assert backend.entered.wait(timeout=3.0)
+        # Second speech's job sits queued behind the first — never started.
+        bus.publish("wizard.speech", {"text": "still here"})
+        a.reset()
+        backend.release.set()  # release the first (stale, in-flight) call
+        time.sleep(0.3)
+        # Neither the discarded in-flight job nor the drained queued job publishes.
+        assert not any(t == "anima.perception" for t, _ in events)
+        assert a.status()["turns"] == 0
+    finally:
+        a.stop()
+
+
+def test_normal_job_after_reset_still_publishes():
+    bus, events, a = make()
+    bus.publish("wizard.speech", {"text": "hi"})
+    assert wait_for(events, "anima.perception")
+    a.reset()
+    events.clear()
+    bus.publish("wizard.speech", {"text": "thanks, that is perfect"})
+    assert wait_for(events, "anima.perception")
+    assert a.status()["turns"] == 1
+    a.stop()

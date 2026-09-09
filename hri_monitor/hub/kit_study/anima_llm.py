@@ -10,7 +10,7 @@ from __future__ import annotations
 import queue
 import threading
 
-from anima.config import DRIVE_NAMES, REGIME_NAMES
+from anima.config import DRIVE_NAMES
 from anima.llm.judge import judge
 from anima.llm.perception import perceive
 from anima.llm.schema import Turn
@@ -33,6 +33,7 @@ class AnimaLLM:
         self._human_turns = 0
         self._judgements = 0
         self._errors = 0
+        self._epoch = 0
 
     # -------------------------------------------------------------- lifecycle
     def start(self) -> None:
@@ -51,7 +52,22 @@ class AnimaLLM:
 
     def reset(self) -> None:
         with self._lock:
+            self._epoch += 1
+            epoch = self._epoch
             self._turns.clear(); self._human_turns = 0; self._judgements = 0
+        # Drop any jobs enqueued before this reset (they carry the stale epoch); keep
+        # anything concurrently enqueued under the new epoch. In-flight jobs (already
+        # dequeued by the worker) are caught by the epoch re-check in `_loop`.
+        pending = []
+        try:
+            while True:
+                item = self._q.get_nowait()
+                if item is not None and item[1] == epoch:
+                    pending.append(item)
+        except queue.Empty:
+            pass
+        for item in pending:
+            self._q.put(item)
 
     def status(self) -> dict:
         with self._lock:
@@ -67,9 +83,10 @@ class AnimaLLM:
                 self._turns.append(Turn("human", str(d.get("text", ""))))
                 self._human_turns += 1
                 do_judge = self._human_turns % self.judge_every == 0
-            self._q.put(("perceive", None))
+                epoch = self._epoch
+            self._q.put(("perceive", epoch))
             if do_judge:
-                self._q.put(("judge", None))
+                self._q.put(("judge", epoch))
         elif topic == "robot.part_staged":
             self._agent(f"[robot] staged part {d.get('part_id')} in slot {d.get('slot')}")
         elif topic == "supply.decision":
@@ -87,12 +104,17 @@ class AnimaLLM:
             item = self._q.get()
             if item is None:
                 break
-            kind, _ = item
+            kind, epoch = item
             with self._lock:
+                if epoch != self._epoch:
+                    continue  # reset() happened before this job started: drop it
                 turns = list(self._turns)
             try:
                 if kind == "perceive":
                     p = perceive(self.backend, turns, self.mission, history=self.history)
+                    with self._lock:
+                        if epoch != self._epoch:
+                            continue  # reset() happened mid-call: discard the result
                     payload = {f"{n}_pull": float(v) for n, v in zip(DRIVE_NAMES, p.drive_pull)}
                     payload.update(regime=p.regime_argmax,
                                    regime_confidence=float(p.regime_posterior.max()),
@@ -101,9 +123,13 @@ class AnimaLLM:
                 else:
                     v = judge(self.backend, turns, self.mission, history=self.history + 2)
                     with self._lock:
+                        if epoch != self._epoch:
+                            continue  # reset() happened mid-call: discard the result
                         self._judgements += 1
                     self.bus.publish("anima.verdict", {"g": float(v.g), "rationale": v.rationale})
             except Exception as e:  # LLM/network failures never take the app down
                 with self._lock:
+                    if epoch != self._epoch:
+                        continue  # stale job: don't record an error for a discarded reset
                     self._errors += 1
                 self.bus.publish("anima.error", {"kind": kind, "error": f"{type(e).__name__}: {e}"})
