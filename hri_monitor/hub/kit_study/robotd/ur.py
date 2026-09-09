@@ -112,8 +112,10 @@ class URBackend(RobotBackend):
           half-open connection leaks the old sockets and the RTDE control script keeps
           owning the robot.
         """
-        if self._abort.is_set() and self._busy:
-            raise RobotError("stop latched; send home first")
+        if self._busy:
+            # Closing the interfaces under a running skill would null ctrl/recv on the
+            # worker thread; the wizard must STOP (and Home) before reconnecting.
+            raise RobotError("skill in progress; stop the robot before reconnecting")
         self._close_interfaces()
         try:
             self.ctrl, self.recv, self.io = self._factory(self.ip)

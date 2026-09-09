@@ -189,10 +189,9 @@ class RobotBridge:
             except RobotError as e:
                 self._report_failure(job_id, skill, args, e, str(e))
             except Exception as e:  # never let the worker die
-                self.bus.publish("robot.skill_failed", {"job_id": job_id, "skill": skill, "args": args,
-                                                        "error": f"{type(e).__name__}: {e}",
-                                                        "protective_stop": False, "aborted": False,
-                                                        "robot_fault": False, "safety": None})
+                # Raw RTDE errors (socket dropped mid-move) are not RobotErrors but must still
+                # latch when the backend now reports itself disconnected.
+                self._report_failure(job_id, skill, args, e, f"{type(e).__name__}: {e}")
             finally:
                 self._publish_state()
                 with self._lock:

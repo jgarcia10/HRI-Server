@@ -35,7 +35,6 @@ class SimBackend(RobotBackend):
 
     def disconnect(self) -> None:
         self._connected = False
-        self._busy = False
 
     # ---------------------------------------------------------------- skills
     def _run(self, skill: str) -> None:

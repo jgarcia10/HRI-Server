@@ -289,14 +289,19 @@ class SupplyController:
         with self._lock:
             if self._order is None:
                 return
-            if self._paused:
+            paused = self._paused
+            if paused:
                 # C1/C3: while the robot is latched nothing is submitted; the UI is told why.
-                self._blocked = {"reason": self._pause_reason or "estop",
-                                 "needed": self._current_part_id, "staged": dict(self._staged)}
-                if not self._blocked_published:
+                # A reason change while already paused (part_failed → robot_fault) must reach
+                # the CSV marker too, not only supply.state.
+                reason = self._pause_reason or "estop"
+                changed = (self._blocked or {}).get("reason") != reason
+                self._blocked = {"reason": reason, "needed": self._current_part_id,
+                                 "staged": dict(self._staged)}
+                if not self._blocked_published or changed:
                     to_publish_blocked = dict(self._blocked)
                     self._blocked_published = True
-        if self._paused:
+        if paused:
             if to_publish_blocked is not None:
                 self.bus.publish("supply.blocked", to_publish_blocked)
             return

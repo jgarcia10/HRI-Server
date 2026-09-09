@@ -470,16 +470,19 @@ def test_disconnect_closes_all_interfaces_and_latches_abort():
     assert st.connected is False and st.safety == "disconnected"
 
 
-def test_connect_refuses_while_a_latched_skill_is_still_unwinding():
-    """`connect()` clears the stop latch, so it must never be a back door around a STOP that
-    a worker thread is still inside. Only `home` resumes."""
+def test_connect_refuses_while_a_skill_is_running():
+    """`connect()` closes and replaces ctrl/recv/io, so it must never run under a skill on
+    the worker thread — latched or not (a raised recv call mid-move makes state() report
+    disconnected, which is exactly when the wizard would press Reconnect)."""
     b, c, r, io = make()
-    b._busy = True                           # a skill is mid-unwind on the worker thread
-    b.stop()
-    with pytest.raises(RobotError, match="stop latched; send home first"):
+    b._busy = True                           # a skill is mid-flight on the worker thread
+    with pytest.raises(RobotError, match="skill in progress"):
         b.connect()
-    assert b.stop_latched is True
     assert b.ctrl is c                        # the live interfaces were left alone
+    b.stop()                                  # same answer while latched
+    with pytest.raises(RobotError, match="skill in progress"):
+        b.connect()
+    assert b.stop_latched is True and b.ctrl is c
 
     # once nothing is running, a reconnect is allowed again and closes the old interfaces
     b._busy = False

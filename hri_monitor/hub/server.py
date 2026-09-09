@@ -32,11 +32,12 @@ MJPEG_FPS = 15
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     yield
-    # Shutdown: never leave the robot mid-motion or the RTDE script owning the socket when
-    # the process exits (Ctrl-C). Order matters — stop the session first (it unsubscribes
-    # supply/engine so nothing submits new jobs, and closes the recording), then estop the
-    # physical motion, then tear down the bridge worker/backend connection, then the LLM
-    # worker.
+    # Shutdown: never leave the RTDE script owning the socket when the process exits
+    # (Ctrl-C). Order matters — stop the session first (it unsubscribes supply/engine so
+    # nothing submits new jobs, waits up to _STOP_WAIT_S for the in-flight skill so the
+    # brick is not dropped mid-air, and closes the recording), then estop whatever is still
+    # queued, then tear down the bridge worker/backend connection, then the LLM worker.
+    # Ctrl-C is therefore not an emergency stop; the physical E-stop and the wizard STOP are.
     kit_session = getattr(app.state, "kit_session", None)
     if kit_session is not None:
         try:
