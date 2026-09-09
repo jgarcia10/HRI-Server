@@ -14,7 +14,17 @@ All commands run from `hri_monitor/` unless noted. `run.py` takes `--mode sim|ro
   condition, Start block → parts appear on the staging slots (per the look-ahead) → click
   "Part placed" as the participant would → change look-ahead/side/pace live from the wizard →
   "STOP robot" is available at any time (`POST /api/kit/robot/stop`, clears the queue and
-  e-stops the backend).
+  e-stops the backend) and remains **one click, no confirmation dialog**.
+- STOP **latches** the robot (`robot.state.latched = "estop"`): every skill except `home` is
+  rejected (`robot.rejected`) and supply pauses (`supply.state.blocked.reason = "estop"`) until
+  the wizard presses **Home**, which clears the latch (`robot.resumed`) and lets supply resume.
+  The UI shows a red "LATCHED: estop — press Home to resume" banner on the robot card while
+  this holds; there is no other way to clear it.
+- At every order transition: remove any leftover bricks from the shared mat, then press
+  **Mat cleared** (`POST /api/kit/event {"type": "mat_cleared"}`) so every staged slot is
+  considered free again — do this before the next order's supply starts staging into a slot
+  that still (visually) looks occupied. Per-slot "Slot cleared" buttons remain for clearing one
+  slot without a full mat reset.
 
 ## B. Dev laptop: URSim rehearsal (Docker)
 
@@ -38,7 +48,11 @@ robot` refuses this shortcut (see section C.4).
 
 ## C. Lab: UR5 (192.168.131.140, wired Ethernet from this PC)
 
- 1. Network: set this PC's wired interface to `192.168.131.x/24`; `ping 192.168.131.140`.
+ 1. Network: set this PC's wired interface to `192.168.131.x/24`; `ping 192.168.131.140`. If the
+    UR5 is unreachable when the app starts, `run.py` still comes up — the robot card just shows
+    "disconnected" and every skill request fails until it connects. Fix the network, then press
+    **Reconnect** on the robot card (`POST /api/kit/robot/connect`) rather than restarting the
+    app; it re-attempts the backend connection and returns the fresh robot state.
  2. PolyScope: check version (RTDE needs ≥3.7); safety config = reduced mode + planes around
     the shared mat; e-Series → Remote Control ON. Both E-stops within reach.
  3. Gripper (OnRobot on tool digital output 0): with the robot idle, `open_gripper` from the
@@ -59,8 +73,19 @@ robot` refuses this shortcut (see section C.4).
     BL1-2, SF1-3, LM1-3.) Grasp pose = jaws around the brick below the stud, gripper open.
  5. Bench (spec M4 exit): `run.py --mode robot`; from the wizard: Home, then start a block with
     a team member placing parts; log ≥ 40 supply cycles; require ≥95% success, cycle ≤ 5 s p95
-    (`robot.skill_duration_s` in the CSV), one protective-stop drill (push the arm → app shows
-    `protective_stop`, STOP robot, reset in PolyScope, Home resumes).
+    (`robot.<skill>_duration_s`, e.g. `robot.supply_duration_s`, in the CSV).
+
+    **Protective-stop drill** (do this once per bench session): with the robot mid-skill (or
+    idle — a ~3 Hz monitor also catches it while idle), push on the arm hard enough to trigger
+    PolyScope's protective stop.
+      - App shows `robot.state.latched = "protective_stop"`; the in-flight part is **not**
+        marked failed, supply pauses (`supply.state.blocked.reason = "protective_stop"`), and
+        the UI blocked-banner reads "Robot stopped — reset in PolyScope if needed, then Home".
+      - In PolyScope: clear the protective stop / release the safeguard, back to Normal.
+      - In the wizard: press **Home**. This clears the latch (`robot.resumed`) and supply
+        resumes automatically with the *same* part it was staging — no re-queue needed.
+      - Confirm no `part_failed` was recorded for that part and the CSV has a `blocked` marker
+        around the drill.
  6. Sensors: Shimmer → Devices page (bind rfcomm, connect); Optris → status connected
     (`Formats.def` now present in `/usr/share/libirimager`); webcam index in `config.yaml`.
 
@@ -73,21 +98,44 @@ robot` refuses this shortcut (see section C.4).
     mission: "..."           # fixed ANIMA mission text for perceive()/judge()
     judge_every: 2           # judge() runs once every N human (wizard.speech) turns
     history: 6               # turns of context passed to perceive()/judge()
+    cache_dir: null          # disk cache dir; null disables the cache — REQUIRED for live runs
+    timeout_s: 20            # OpenAI client timeout, seconds
+    max_retries: 1           # OpenAI client retry count
+    reasoning_budget: 2048   # extra max_output_tokens reserved for gpt-5 reasoning tokens
 
 `provider: mock` is the checked-in default, so rehearsals (sections A and B, and CI) never
 call an LLM and cost nothing. For a real run: `export OPENAI_API_KEY=sk-...`, set
 `provider: openai` in `llm.yaml`. `judge_every` is the cost guard — perception runs on every
 wizard-speech turn, but the (usually pricier) judge call only every `judge_every` turns.
 
+**`cache_dir` must stay `null` for every live participant session.** The on-disk LLM cache
+keys purely on (system, prompt, schema, max_tokens, effort, salt) — it does not know about
+participants — so a non-null `cache_dir` shared across a study would silently serve a cached
+perception/verdict for identical prompts (e.g. repeated "wait"), producing zero-latency,
+zero-usage responses that are not a real measurement. Only set it (e.g. `.llm_cache`) for
+offline, single-operator rehearsals where deterministic replay is wanted.
+
+`timeout_s`/`max_retries` bound the OpenAI client (its own defaults are 600s and 2 retries —
+both too permissive for a live wizard turn). `reasoning_budget` is added on top of the
+caller's `max_tokens` (384 for the judge, 512 for perception) whenever reasoning is enabled:
+on gpt-5 models, reasoning tokens are billed against `max_output_tokens`, so without this
+headroom the model spends the whole budget on hidden reasoning, returns
+`status="incomplete"`, and the call raises instead of returning an answer — the entire
+`anima.*` stream would otherwise silently stop while `provider: openai` is on. These three
+keys only take effect when `provider: openai`.
+
 ## E. Cristi's anima repo tests
 
 Repo: `/home/juanjose-ensta/Documents/ENSTA/ICRA 2027 - Cristi/anima`, branch `openai-backend`.
 
     cd "/home/juanjose-ensta/Documents/ENSTA/ICRA 2027 - Cristi/anima"
-    env -u PYTHONPATH .venv/bin/pytest -q
+    env -u PYTHONPATH /home/juanjose-ensta/Documents/HRIServcer/hri_monitor/.venv/bin/pytest -q
 
-`env -u PYTHONPATH` matters here: the ambient ROS `PYTHONPATH` on this machine breaks pytest's
-plugin discovery, so it must be unset for the anima test suite specifically (not needed for
-`hri_monitor`'s own `.venv/bin/pytest`, which doesn't inherit that path). `OpenAIBackend`
-(`anima/llm/backend.py`) talks to GPT via the Responses API (`client.responses.create(...)`)
-and reads `OPENAI_API_KEY` from the environment — same key as section D.
+The anima repo has no `.venv` of its own — it borrows `hri_monitor`'s venv (same interpreter,
+`anima` is importable from there). `env -u PYTHONPATH` matters here: the ambient ROS
+`PYTHONPATH` on this machine breaks pytest's plugin discovery, so it must be unset for the
+anima test suite specifically (not needed for `hri_monitor`'s own `.venv/bin/pytest` runs from
+`hri_monitor/`, which don't inherit that path). `OpenAIBackend` (`anima/llm/backend.py`) talks
+to GPT via the Responses API (`client.responses.create(...)`), reads `OPENAI_API_KEY` from the
+environment (same key as section D), and applies `timeout_s`/`max_retries`/`reasoning_budget`
+from `llm.yaml` — see section D for why those matter.

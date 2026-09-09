@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from hub.bus import MessageBus
@@ -97,3 +99,65 @@ def test_bluetooth_scan_endpoint(monkeypatch):
     client = TestClient(srv.create_app(MessageBus(), FakeManager()))
     r = client.post("/api/bluetooth/scan", json={"seconds": 2})
     assert r.status_code == 200 and r.json()["devices"][0]["name"] == "Shimmer3"
+
+
+# --------------------------------------------------------------------------------------------
+# I2: shutdown must never leave the robot/RTDE connection/LLM worker dangling on process exit.
+# --------------------------------------------------------------------------------------------
+
+def _kit_app(tmp_path, robot_timing=None):
+    from hub.experiments.controller import RecordingController
+    from hub.experiments.db import Database
+    bus = MessageBus()
+    db = Database(tmp_path / "hri.db")
+    ctrl = RecordingController(bus, db, tmp_path / "recordings")
+    kit_mode = {
+        "robot": {"backend": "sim", "timing": {"home": 0.002, "pick": 0.002, "place": 0.002,
+                                               "open_gripper": robot_timing or 0.002, "noise_std": 0.0}},
+        "supply": {"lookahead": 1, "side": "C", "pace": "normal", "announce": False},
+    }
+    app = create_app(bus, FakeManager(), ui_dir=None, config_path=tmp_path / "c.yaml",
+                     experiments={"db": db, "controller": ctrl}, kit_mode=kit_mode)
+    return app
+
+
+def test_shutdown_stops_robot_bridge_and_anima_llm_when_idle(tmp_path):
+    app = _kit_app(tmp_path)
+    bridge, anima_llm = app.state.robot_bridge, app.state.anima_llm
+    calls = []
+    orig_estop, orig_bridge_stop, orig_llm_stop = bridge.estop, bridge.stop, anima_llm.stop
+    bridge.estop = lambda: (calls.append("estop"), orig_estop())[-1]
+    bridge.stop = lambda: (calls.append("bridge.stop"), orig_bridge_stop())[-1]
+    anima_llm.stop = lambda: (calls.append("anima_llm.stop"), orig_llm_stop())[-1]
+
+    with TestClient(app):
+        pass  # nothing running: the bridge sits idle
+
+    assert "estop" not in calls  # nothing was mid-motion, so no estop needed
+    assert calls == ["bridge.stop", "anima_llm.stop"]  # bridge torn down before the LLM worker
+
+
+def test_shutdown_estops_when_a_skill_is_in_flight(tmp_path):
+    app = _kit_app(tmp_path, robot_timing=1.0)  # open_gripper takes 1s: still running at shutdown
+    bridge = app.state.robot_bridge
+    calls = []
+    orig_estop, orig_bridge_stop = bridge.estop, bridge.stop
+    bridge.estop = lambda: (calls.append("estop"), orig_estop())[-1]
+    bridge.stop = lambda: (calls.append("bridge.stop"), orig_bridge_stop())[-1]
+
+    with TestClient(app):
+        bridge.submit("open_gripper")
+        t0 = time.time()
+        while not bridge.state()["busy"] and time.time() - t0 < 2.0:
+            time.sleep(0.01)
+        assert bridge.state()["busy"], "skill never started"
+        # exit the `with` here -> lifespan shutdown fires while the skill is still running
+
+    assert calls == ["estop", "bridge.stop"]
+
+
+def test_shutdown_is_a_noop_without_kit_study(tmp_path):
+    # No `experiments=` -> no robot_bridge/anima_llm on app.state; shutdown must not blow up.
+    bus = MessageBus()
+    with TestClient(create_app(bus, FakeManager())):
+        pass

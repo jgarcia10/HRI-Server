@@ -1,6 +1,8 @@
 import asyncio
+import logging
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -12,20 +14,43 @@ from . import assets, bluetooth, cameras
 from .config import save_config
 from .frames import FrameStore
 
+log = logging.getLogger(__name__)
+
 # Numeric topics forwarded to the dashboard. Frame topics carry numpy arrays
 # and are served via MJPEG instead — never JSON.
 STREAM_TOPICS = {
     "shimmer.gsr", "shimmer.ppg", "thermal.temps", "rgb.blink",
     "ppg.hr", "ppg.hrv", "model.estimates", "task.state", "robot.state", "supply.state",
     "anima.perception", "anima.verdict",
+    "robot.rejected", "robot.resumed", "robot.estop", "supply.blocked",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    # Shutdown: never leave the robot mid-motion or the RTDE script owning the socket when
+    # the process exits (Ctrl-C). Order matters — estop the physical motion first, then tear
+    # down the bridge worker/backend connection, then the LLM worker.
+    bridge = getattr(app.state, "robot_bridge", None)
+    if bridge is not None:
+        try:
+            st = bridge.state()
+            if st.get("busy") or st.get("queue", 0):
+                bridge.estop()
+        except Exception:
+            log.exception("robot_bridge.estop() during shutdown failed")
+        bridge.stop()
+    anima_llm = getattr(app.state, "anima_llm", None)
+    if anima_llm is not None:
+        anima_llm.stop()
+
+
 def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments=None,
               kit_mode: dict | None = None) -> FastAPI:
-    app = FastAPI(title="HRI Monitor")
+    app = FastAPI(title="HRI Monitor", lifespan=_lifespan)
     frames = FrameStore(bus, {"thermal": "thermal.frame", "rgb": "rgb.frame"})
     app.state.frames = frames
 
@@ -52,7 +77,21 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         from anima.llm.backend import make_backend
         import yaml as _yaml
         llm_cfg = _yaml.safe_load((Path(__file__).parent / "kit_study" / "configs" / "llm.yaml").read_text())
-        anima_llm = AnimaLLM(bus, make_backend(provider=llm_cfg.get("provider", "mock"), model=llm_cfg.get("model")),
+        # cache_dir applies to any real backend (anthropic/openai) and defaults to None (no
+        # on-disk cache) — a shared cache across participants would fabricate perception, see
+        # RUNBOOK §D. timeout_s/max_retries/reasoning_budget only apply to OpenAIBackend.
+        backend_kwargs: dict = {}
+        if "cache_dir" in llm_cfg:
+            backend_kwargs["cache_dir"] = llm_cfg["cache_dir"]
+        provider = llm_cfg.get("provider", "mock")
+        if provider == "openai":
+            if "timeout_s" in llm_cfg:
+                backend_kwargs["timeout_s"] = float(llm_cfg["timeout_s"])
+            if "max_retries" in llm_cfg:
+                backend_kwargs["max_retries"] = int(llm_cfg["max_retries"])
+            if "reasoning_budget" in llm_cfg:
+                backend_kwargs["reasoning_budget"] = int(llm_cfg["reasoning_budget"])
+        anima_llm = AnimaLLM(bus, make_backend(provider=provider, model=llm_cfg.get("model"), **backend_kwargs),
                              mission=llm_cfg["mission"], judge_every=int(llm_cfg.get("judge_every", 2)),
                              history=int(llm_cfg.get("history", 6)))
         anima_llm.start()

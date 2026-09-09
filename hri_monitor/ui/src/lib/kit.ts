@@ -23,6 +23,7 @@ export type RobotState = {
   last_skill: string | null;
   safety: string;
   queue: number;
+  latched: "estop" | "protective_stop" | "emergency_stop" | null;
 };
 
 export type SupplyState = {
@@ -38,7 +39,11 @@ export type SupplyState = {
   supplied: string[];
   next_part_id: string | null;
   failed: string[];
-  blocked: { reason: string; needed: string | null; [k: string]: unknown } | null;
+  blocked: {
+    reason: "mat_full" | "part_failed" | "estop" | "protective_stop" | "emergency_stop";
+    needed: string | null;
+    [k: string]: unknown;
+  } | null;
 };
 
 export function useKitWs() {
@@ -113,6 +118,7 @@ const post = (url: string, body?: unknown) =>
 export const robotHome = () => post("/api/kit/robot/home");
 export const robotStop = () => post("/api/kit/robot/stop");
 export const robotOpenGripper = () => post("/api/kit/robot/open_gripper");
+export const robotConnect = () => post("/api/kit/robot/connect");
 export const setSupplyProfile = (p: Partial<SupplyState["profile"]>) =>
   post("/api/kit/supply/profile", p);
 export const startSession = (body: {
@@ -124,3 +130,4 @@ export const startSession = (body: {
 export const stopSession = () => post("/api/kit/session/stop");
 export const postEvent = (type: string, payload: Record<string, unknown> = {}) =>
   post("/api/kit/event", { type, payload });
+export const matCleared = () => postEvent("mat_cleared");

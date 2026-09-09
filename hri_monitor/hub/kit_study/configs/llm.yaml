@@ -3,3 +3,19 @@ model: gpt-5-mini
 mission: "Supply the participant with the right kit parts at the right time so they can assemble each kit quickly and accurately, adapting to how this person likes to be assisted."
 judge_every: 2
 history: 6
+
+# LLM backend hygiene (fixwave I6/I7): a shared on-disk cache across participants would
+# fabricate perception (identical prompt -> cached answer, zero latency, no usage recorded),
+# and an unbounded/undertimed OpenAI call can hang or silently truncate. Live sessions must
+# use these values; only relax them for scripted, single-operator rehearsals.
+cache_dir: null          # disk cache directory; null disables the cache entirely — required
+                          # for live participant sessions. Set e.g. ".llm_cache" only for
+                          # offline rehearsals where deterministic replay is worth more than
+                          # a fresh call per turn.
+timeout_s: 20             # per-call OpenAI client timeout, seconds (SDK default is 600s)
+max_retries: 1             # OpenAI client retry count (SDK default is 2)
+reasoning_budget: 2048    # extra max_output_tokens reserved for gpt-5 reasoning tokens, added
+                          # on top of the caller's max_tokens (384 judge / 512 perception).
+                          # Without this, reasoning-capable models spend the whole token
+                          # budget on hidden reasoning, return status="incomplete" with no
+                          # JSON, and every anima.* call fails. Only used when provider: openai.

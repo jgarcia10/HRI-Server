@@ -29,7 +29,8 @@ chosen mode file.
   slots on an arbitrary grid — validates motion/RTDE, not table geometry).
 - `robot` — real `URBackend` against the lab UR5. **Fail-closed**: refuses to start unless
   `hub/kit_study/configs/calibration.yaml` (taught poses) exists — it never falls back to the
-  example calibration on the real robot.
+  example calibration on the real robot. If the UR5 is unreachable, the app still starts (the
+  robot card shows disconnected); fix the network and press **Reconnect**.
 
 Full lab procedure (network, PolyScope, gripper, teaching poses, bench acceptance, sensors,
 GPT judge, and Cristi's anima repo tests): see `RUNBOOK_robot.md` in this directory.
@@ -37,9 +38,20 @@ GPT judge, and Cristi's anima repo tests): see `RUNBOOK_robot.md` in this direct
 ## Robot/supply/anima topics and endpoints
 
 Bus topics: `robot.skill_queued/started/done/failed`, `robot.part_staged`, `robot.state`,
-`robot.estop`; `supply.decision`, `supply.blocked`, `supply.state`; `anima.perception`,
-`anima.verdict`, `anima.error`.
+`robot.estop`, `robot.rejected`, `robot.resumed`; `supply.decision`, `supply.blocked`,
+`supply.state`; `anima.perception`, `anima.verdict`, `anima.error`.
+
+`robot.state.latched` is `"estop" | "protective_stop" | "emergency_stop" | null` — while set,
+every skill except `home` is rejected (`robot.rejected {skill, args, reason}`) and a
+successful `home` clears it (`robot.resumed`). `supply.state.blocked.reason` is one of
+`mat_full | part_failed | estop | protective_stop | emergency_stop`. Per-skill durations are
+recorded as `robot.<skill>_duration_s` (e.g. `robot.supply_duration_s`) in the CSV.
 
 HTTP: `GET /api/kit/robot/state`, `POST /api/kit/robot/home`, `POST /api/kit/robot/open_gripper`,
-`POST /api/kit/robot/stop`; `GET /api/kit/supply/state`, `POST /api/kit/supply/profile`
-(`lookahead`, `side`, `pace`, `announce`).
+`POST /api/kit/robot/stop`, `POST /api/kit/robot/connect` (re-attempts the backend connection,
+returns robot state); `GET /api/kit/supply/state`, `POST /api/kit/supply/profile`
+(`lookahead`, `side`, `pace`, `announce`); `POST /api/kit/event` also accepts
+`{"type": "mat_cleared"}` (all staged slots considered free — use at order transitions) in
+addition to the existing per-slot `{"type": "slot_cleared", "payload": {"slot": ...}}`.
+`session/start` returns 409 while the robot is still busy from the previous session;
+`session/stop` waits up to 6 s for any in-flight skill.

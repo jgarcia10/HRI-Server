@@ -1,6 +1,8 @@
 import { useState } from "react";
 import {
+  matCleared,
   postEvent,
+  robotConnect,
   robotHome,
   robotOpenGripper,
   robotStop,
@@ -11,6 +13,19 @@ import {
 } from "../lib/kit";
 
 const SPEECH = ["wait", "faster", "slower", "give me the red one", "put it on the left"];
+
+// Blocked-reason copy shown to the wizard. estop/protective_stop/emergency_stop share the
+// same recovery path: reset the controller if needed, then Home (which also clears the
+// robot's own `latched` state and lets supply resume with the same part).
+function blockedMessage(reason: string, needed: string | null): string {
+  if (reason === "estop" || reason === "protective_stop" || reason === "emergency_stop") {
+    return "Robot stopped — reset in PolyScope if needed, then Home";
+  }
+  if (reason === "mat_full") {
+    return "Mat full — clear a slot (or press Mat cleared) to continue";
+  }
+  return `${reason}${needed ? ` — needed part ${needed}` : ""}`;
+}
 
 export function Runner() {
   const { task, robot, supply, connected } = useKitWs();
@@ -89,7 +104,17 @@ export function Runner() {
           <button className="rounded bg-slate-600 px-3 py-2 text-white" onClick={call(robotHome)}>Home</button>
           <button className="rounded bg-slate-600 px-3 py-2 text-white" onClick={call(robotOpenGripper)}>Open gripper</button>
           <button className="rounded bg-red-700 px-5 py-2 text-lg font-bold text-white" onClick={call(robotStop)}>■ STOP robot</button>
+          {robot && !robot.connected && (
+            <button className="rounded bg-amber-600 px-3 py-2 text-white" onClick={call(robotConnect)}>
+              Reconnect
+            </button>
+          )}
         </div>
+        {robot?.latched && (
+          <div className="mt-3 rounded bg-red-600/20 px-3 py-2 text-sm font-semibold text-red-600">
+            ⛔ LATCHED: {robot.latched} — press Home to resume
+          </div>
+        )}
       </section>
 
       <section className="glass p-4">
@@ -121,8 +146,8 @@ export function Runner() {
         </div>
         {supply?.blocked && (
           <div className="mt-3 rounded bg-amber-500/20 px-3 py-2 text-sm text-amber-600">
-            ⚠ Supply blocked: {supply.blocked.reason} — needed part {supply.blocked.needed}
-            <div className="mt-2 flex gap-2">
+            ⚠ Supply blocked: {blockedMessage(supply.blocked.reason, supply.blocked.needed)}
+            <div className="mt-2 flex flex-wrap gap-2">
               <button className="rounded bg-amber-600 px-3 py-1 text-sm text-white" disabled={!active}
                       onClick={call(() => postEvent("slot_cleared", { slot: "L" }))}>
                 Slot cleared L
@@ -134,6 +159,10 @@ export function Runner() {
               <button className="rounded bg-amber-600 px-3 py-1 text-sm text-white" disabled={!active}
                       onClick={call(() => postEvent("slot_cleared", { slot: "R" }))}>
                 Slot cleared R
+              </button>
+              <button className="rounded bg-amber-700 px-3 py-1 text-sm text-white" disabled={!active}
+                      onClick={call(matCleared)}>
+                Mat cleared
               </button>
             </div>
           </div>
@@ -158,6 +187,11 @@ export function Runner() {
                 disabled={task?.phase !== "between_orders"}
                 onClick={call(() => postEvent("next_order"))}>
           ▶ Next order
+        </button>
+        <button className="rounded bg-amber-700 px-4 py-3 text-white disabled:opacity-40"
+                disabled={!active}
+                onClick={call(matCleared)}>
+          Mat cleared
         </button>
         {(["L", "C", "R"] as const).map((slot) => (
           <button key={slot} className="rounded bg-purple-600 px-4 py-3 text-white"
