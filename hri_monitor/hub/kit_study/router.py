@@ -59,6 +59,9 @@ def build_kit_router(session: KitSession, bus, bridge=None) -> APIRouter:
         if body.type == "slot_cleared":
             bus.publish("wizard.slot_cleared", {"slot": body.payload.get("slot")})
             return {"ok": True}
+        if body.type == "mat_cleared":
+            bus.publish("wizard.mat_cleared", {})
+            return {"ok": True}
         if session.engine is None:
             return JSONResponse({"detail": "no active session"}, status_code=409)
         if body.type == "part_placed":
@@ -69,29 +72,63 @@ def build_kit_router(session: KitSession, bus, bridge=None) -> APIRouter:
             return {"ok": True}
         return JSONResponse({"detail": f"unknown event type {body.type}"}, status_code=400)
 
+    def _no_robot():
+        return JSONResponse({"detail": "no robot bridge configured"}, status_code=503)
+
     @r.get("/api/kit/robot/state")
     def robot_state():
+        if bridge is None:
+            return _no_robot()
         return bridge.state()
+
+    @r.post("/api/kit/robot/connect")
+    def robot_connect():
+        if bridge is None:
+            return _no_robot()
+        st = bridge.connect()
+        return {"ok": bool(st.get("connected")), "state": st}
 
     @r.post("/api/kit/robot/home")
     def robot_home():
-        return {"ok": True, "job_id": bridge.submit("home")}
+        if bridge is None:
+            return _no_robot()
+        job_id = bridge.submit("home")
+        return {"ok": job_id is not None, "job_id": job_id}
 
     @r.post("/api/kit/robot/open_gripper")
     def robot_open():
-        return {"ok": True, "job_id": bridge.submit("open_gripper")}
+        if bridge is None:
+            return _no_robot()
+        job_id = bridge.submit("open_gripper")
+        return {"ok": job_id is not None, "job_id": job_id}
 
     @r.post("/api/kit/robot/stop")
     def robot_stop():
-        bridge.estop()
-        return {"ok": True}
+        # The STOP button must never fail: a backend that raises still leaves the bridge
+        # latched, and the wizard gets the error in the body rather than a 500.
+        if bridge is None:
+            return _no_robot()
+        error = None
+        try:
+            bridge.estop()
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+        try:
+            st = bridge.state()
+        except Exception:
+            st = None
+        return {"ok": error is None, "error": error, "state": st}
 
     @r.get("/api/kit/supply/state")
     def supply_state():
+        if bridge is None:
+            return _no_robot()
         return session.supply.status() if session.supply else {}
 
     @r.post("/api/kit/supply/profile")
     def supply_profile(body: ProfileIn):
+        if bridge is None:
+            return _no_robot()
         if session.supply is None:
             return JSONResponse({"detail": "no active session"}, status_code=409)
         try:

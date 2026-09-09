@@ -65,7 +65,8 @@ def test_full_block_robot_supplies_every_part(tmp_path):
         with open(info["csv_path"]) as f:
             signals = [row["signal"] for row in csv.DictReader(f)]
         assert signals.count("robot.part_staged") == TOTAL_PARTS
-        assert "robot.skill_duration_s" in signals and "task.part_placed" in signals
+        assert "robot.supply_duration_s" in signals and "task.part_placed" in signals
+        assert "robot.skill_duration_s" not in signals   # I4: one series per skill
         assert "anima.intensity" in signals            # mock perception recorded
     finally:
         app.state.robot_bridge.stop()

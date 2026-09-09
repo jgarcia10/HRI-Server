@@ -1,6 +1,7 @@
 """Experiment session: wires TaskEngine to the recording pipeline and markers."""
 from __future__ import annotations
 
+import logging
 import random
 import threading
 import time
@@ -13,9 +14,17 @@ EXPERIMENT_NAME = "Kit Study"
 CONDITIONS = ("C0", "C1")
 _MARKER_TOPICS = {"task.order_started", "task.perturbation",
                   "task.order_completed", "task.block_completed",
-                  "wizard.speech", "wizard.reposition"}
+                  "wizard.speech", "wizard.reposition", "wizard.mat_cleared",
+                  # I5: without these, which part went to which slot (and why the robot
+                  # stopped) is unrecoverable from a recording.
+                  "robot.part_staged", "robot.skill_failed", "robot.estop",
+                  "robot.rejected", "robot.resumed",
+                  "supply.decision", "supply.blocked"}
+_STOP_WAIT_S = 6.0   # session teardown waits for the in-flight robot job (I3)
 _CONFIGS_DIR = Path(__file__).parent / "configs"
 _SPEECH_LABEL_MAX = 120
+
+log = logging.getLogger(__name__)
 
 
 def _idle_task_state(block) -> dict:
@@ -57,6 +66,10 @@ class KitSession:
               profile: dict | None = None) -> dict:
         if self._info is not None:
             raise RuntimeError("a kit session is already active")
+        if self.bridge is not None and (self.bridge.queue_size() or self.bridge.busy()):
+            # I3: a job left over from the previous session would stage a part into this one
+            raise RuntimeError("robot busy: a previous robot job is still running — "
+                               "wait for it to finish (or press STOP) before starting a session")
         if condition not in CONDITIONS:
             raise ValueError(f"condition must be one of {CONDITIONS}")
         block_path = self.configs_dir / Path(block).name
@@ -105,7 +118,12 @@ class KitSession:
             self.supply.stop()
             self.supply = None
         if self.bridge is not None:
-            self.bridge.clear_queue()   # a stopped session must never leave supply jobs moving the robot
+            # a stopped session must never leave supply jobs moving the robot, and its
+            # robot.part_staged must not land in the next session (I3)
+            self.bridge.clear_queue()
+            if not self.bridge.wait_idle(_STOP_WAIT_S):
+                log.warning("robot still busy %.0fs after session stop; the in-flight job was "
+                            "not cancelled", _STOP_WAIT_S)
         self.bus.unsubscribe("*", self._on_bus)
         block = self.engine.block
         status = self.controller.status()
@@ -135,12 +153,31 @@ class KitSession:
         topic = message["topic"]
         if topic not in _MARKER_TOPICS:
             return
-        data = message["data"]
+        data = message["data"] or {}
         if topic == "wizard.speech":
             text = str(data.get("text", ""))[:_SPEECH_LABEL_MAX]
             label = f"speech:{text}"
         elif topic == "wizard.reposition":
             label = f"reposition:{data.get('slot', '?')}"
+        elif topic == "wizard.mat_cleared":
+            label = "mat_cleared"
+        elif topic == "robot.part_staged":
+            label = f"staged:{data.get('part_id')}@{data.get('slot')}"
+        elif topic == "robot.skill_failed":
+            kind = ("aborted" if data.get("aborted") else
+                    "protective_stop" if data.get("protective_stop") else "error")
+            pid = (data.get("args") or {}).get("part_id") or ""
+            label = f"skill_failed:{data.get('skill')}:{pid}:{kind}"
+        elif topic == "robot.estop":
+            label = f"estop:{data.get('reason', 'estop')}:{data.get('source', '?')}"
+        elif topic == "robot.rejected":
+            label = f"rejected:{data.get('skill')}:{data.get('reason')}"
+        elif topic == "robot.resumed":
+            label = "resumed"
+        elif topic == "supply.decision":
+            label = f"decision:{data.get('reason')}:{data.get('part_id')}@{data.get('slot')}"
+        elif topic == "supply.blocked":
+            label = f"blocked:{data.get('reason')}:{data.get('needed')}"
         else:
             prefix = topic.removeprefix("task.")
             oid = data.get("order_id") or data.get("family", "")

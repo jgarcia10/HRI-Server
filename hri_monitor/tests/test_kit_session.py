@@ -20,6 +20,91 @@ def stack(tmp_path):
     sess.stop()
 
 
+@pytest.fixture
+def robot_stack(tmp_path):
+    """A session wired to a real bridge over a deliberately slow sim backend."""
+    import random
+
+    from hub.kit_study.robot_bridge import RobotBridge
+    from hub.kit_study.robotd.sim import SimBackend
+
+    bus = MessageBus()
+    db = Database(tmp_path / "hri.db")
+    ctrl = RecordingController(bus, db, tmp_path / "recordings")
+    backend = SimBackend(timing={"home": 0.2, "pick": 0.2, "place": 0.2, "open_gripper": 0.2,
+                                 "noise_std": 0.0}, rng=random.Random(0))
+    bridge = RobotBridge(bus, backend, monitor_interval=5.0)
+    bridge.start()
+    sess = KitSession(bus, db, ctrl, tick_interval=0.02, bridge=bridge,
+                      default_profile={"lookahead": 1, "side": "C"})
+    yield bus, db, ctrl, sess, bridge
+    if sess.status() is not None:
+        sess.stop()
+    bridge.stop()
+
+
+def test_stop_waits_for_the_in_flight_supply(robot_stack):
+    """I3: a supply still running at teardown must not stage a part into the next session."""
+    bus, db, ctrl, sess, bridge = robot_stack
+    staged = []
+    bus.subscribe("robot.part_staged", lambda m: staged.append(m["data"]["part_id"]))
+    sess.start("P10", "C0", "orders_f1.yaml")
+    t0 = time.time()
+    while not bridge.busy() and time.time() - t0 < 2.0:
+        time.sleep(0.01)
+    assert bridge.busy(), "expected a supply job in flight"
+
+    sess.stop()
+    assert not bridge.busy(), "stop() returned while the robot was still moving"
+    n = len(staged)
+    time.sleep(0.3)
+    assert len(staged) == n, "a part was staged after the session stopped"
+
+
+def test_start_rejects_while_the_robot_is_still_busy(robot_stack):
+    bus, db, ctrl, sess, bridge = robot_stack
+    bridge.submit("home")                       # 0.2 s of motion
+    with pytest.raises(RuntimeError, match="robot busy"):
+        sess.start("P11", "C0", "orders_f1.yaml")
+    assert ctrl.status() is None, "the rejected start must not leave a recording behind"
+    assert bridge.wait_idle(2.0)
+    assert sess.start("P11", "C0", "orders_f1.yaml")["recording_id"] is not None
+    sess.stop()
+
+
+def test_busy_start_maps_to_409(robot_stack):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from hub.kit_study.router import build_kit_router
+
+    bus, db, ctrl, sess, bridge = robot_stack
+    app = FastAPI()
+    app.include_router(build_kit_router(sess, bus, bridge))
+    with TestClient(app) as c:
+        bridge.submit("home")
+        r = c.post("/api/kit/session/start", json={"participant_code": "P12", "condition": "C0"})
+        assert r.status_code == 409 and "robot busy" in r.json()["detail"]
+
+
+def test_robot_and_supply_markers_are_labelled(robot_stack):
+    """I5: which part went to which slot must be recoverable from the recording."""
+    bus, db, ctrl, sess, bridge = robot_stack
+    info = sess.start("P13", "C0", "orders_f1.yaml")
+    t0 = time.time()
+    while not any(m["label"].startswith("staged:") for m in db.get_recording(info["recording_id"])["markers"]):
+        assert time.time() - t0 < 3.0, "no staged marker was recorded"
+        time.sleep(0.02)
+    bus.publish("wizard.mat_cleared", {})
+    bridge.estop()
+    sess.stop()
+    labels = [m["label"] for m in db.get_recording(info["recording_id"])["markers"]]
+    assert any(l == "staged:F1O1P1@C" for l in labels)
+    assert any(l.startswith("decision:lookahead=1:F1O1P1@C") for l in labels)
+    assert "mat_cleared" in labels
+    assert "estop:estop:wizard" in labels
+
+
 def test_start_creates_experiment_and_recording(stack):
     bus, db, ctrl, sess = stack
     info = sess.start("P01", "C0", "orders_f1.yaml")

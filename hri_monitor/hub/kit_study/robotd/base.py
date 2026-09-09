@@ -19,6 +19,10 @@ class ProtectiveStop(RobotError):
     """The controller entered protective/emergency stop; motion is refused until reset."""
 
 
+class Aborted(RobotError):
+    """The skill was interrupted by stop(); not a grasp failure — never retry automatically."""
+
+
 @dataclass
 class RobotState:
     connected: bool

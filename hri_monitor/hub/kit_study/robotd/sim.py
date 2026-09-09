@@ -3,9 +3,10 @@ so the sim can be set to the cycle times measured on the UR5 at M4."""
 from __future__ import annotations
 
 import random
+import threading
 import time
 
-from .base import (PACE_FACTOR, RobotBackend, RobotError, RobotState, validate_depot_slot,
+from .base import (PACE_FACTOR, Aborted, RobotBackend, RobotError, RobotState, validate_depot_slot,
                    validate_pace, validate_staging_slot)
 
 DEFAULT_TIMING = {"home": 3.0, "pick": 2.5, "place": 2.5, "open_gripper": 0.5, "noise_std": 0.2}
@@ -20,6 +21,7 @@ class SimBackend(RobotBackend):
         self.failure_rate = float(failure_rate)
         self.rng = rng or random.Random()
         self._sleep = sleep
+        self._abort = threading.Event()   # set by stop(): interrupts the running skill
         self._connected = False
         self._busy = False
         self._gripper_closed = False
@@ -28,6 +30,7 @@ class SimBackend(RobotBackend):
 
     # ------------------------------------------------------------- lifecycle
     def connect(self) -> None:
+        self._abort.clear()
         self._connected = True
 
     def disconnect(self) -> None:
@@ -38,17 +41,27 @@ class SimBackend(RobotBackend):
     def _run(self, skill: str) -> None:
         if not self._connected:
             raise RobotError("sim backend not connected")
+        if self._abort.is_set():
+            raise Aborted(f"{skill} refused: stop() latched")
         base = float(self.timing[skill])
         noise = self.rng.gauss(0.0, float(self.timing["noise_std"])) if self.timing["noise_std"] else 0.0
         dur = max(0.05, base + noise) * PACE_FACTOR[self._pace]
         self._busy = True
         try:
-            self._sleep(dur)
+            if self._sleep is time.sleep:
+                # wait on the abort event instead of sleeping, so stop() interrupts the motion
+                if self._abort.wait(dur):
+                    raise Aborted(f"{skill} interrupted by stop()")
+            else:
+                self._sleep(dur)          # injected clock (fast tests): no real waiting to abort
+                if self._abort.is_set():
+                    raise Aborted(f"{skill} interrupted by stop()")
         finally:
             self._busy = False
             self._last = skill
 
     def home(self) -> None:
+        self._abort.clear()               # homing is the reset gesture
         self._run("home")
 
     def pick(self, depot_slot: str) -> None:
@@ -72,6 +85,7 @@ class SimBackend(RobotBackend):
         self._pace = validate_pace(level)
 
     def stop(self) -> None:
+        self._abort.set()
         self._busy = False
 
     def state(self) -> RobotState:

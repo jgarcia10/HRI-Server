@@ -32,6 +32,22 @@ def test_recorded_topics_set():
         "task.part_placed", "task.perturbation",
         "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared",
         "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
+        "robot.rejected", "robot.resumed",
         "supply.decision", "supply.blocked",
-        "anima.perception", "anima.verdict",
+        "anima.perception", "anima.verdict", "anima.error",
     }
+
+
+def test_skill_done_is_one_series_per_skill():
+    """I4: mixing set_pace/home/supply durations makes the M4 supply-cycle p95 uncomputable."""
+    assert sample_rows("robot.skill_done", {"skill": "supply", "duration_s": 4.2}) == \
+        [("robot.supply_duration_s", 4.2)]
+    assert sample_rows("robot.skill_done", {"skill": "home", "duration_s": 3.0}) == \
+        [("robot.home_duration_s", 3.0)]
+
+
+def test_robot_latch_topics_are_impulses():
+    assert sample_rows("robot.rejected", {"skill": "supply", "args": {}, "reason": "estop"}) == \
+        [("robot.rejected", 1.0)]
+    assert sample_rows("robot.resumed", {}) == [("robot.resumed", 1.0)]
+    assert sample_rows("anima.error", {"kind": "perception", "error": "boom"}) == [("anima.error", 1.0)]

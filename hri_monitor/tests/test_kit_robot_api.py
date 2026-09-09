@@ -79,16 +79,77 @@ def test_session_runs_supply_with_profile(client):
     client.post("/api/kit/session/stop")
 
 
-def test_request_part_event_and_estop(client):
+def test_request_part_event_and_estop_latches_until_home(client):
     client.post("/api/kit/session/start",
                 json={"participant_code": "P02", "condition": "C1", "profile": {"lookahead": 0}})
     time.sleep(0.1)
     assert client.get("/api/kit/supply/state").json()["staged"] == {}
     assert client.post("/api/kit/event", json={"type": "request_part"}).status_code == 200
     assert wait(client, lambda s: len(s["session"]["supply"]["staged"]) == 1)
-    assert client.post("/api/kit/robot/stop").status_code == 200
-    assert client.get("/api/kit/robot/state").json()["queue"] == 0
+
+    r = client.post("/api/kit/robot/stop")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["state"]["latched"] == "estop"
+    st = client.get("/api/kit/robot/state").json()
+    assert st["queue"] == 0 and st["latched"] == "estop"
+
+    # C1: a further request must not put the robot back in motion
+    client.post("/api/kit/event", json={"type": "request_part"})
+    time.sleep(0.2)
+    sup = client.get("/api/kit/supply/state").json()
+    assert len(sup["staged"]) == 1 and sup["paused"] is True
+    assert sup["blocked"]["reason"] == "estop"
+
+    # home clears the latch and supply works again
+    assert client.post("/api/kit/robot/home").json()["ok"] is True
+    assert wait(client, lambda s: s["session"]["supply"]["paused"] is False)
+    assert client.get("/api/kit/robot/state").json()["latched"] is None
+    client.post("/api/kit/event", json={"type": "part_placed"})
+    client.post("/api/kit/event", json={"type": "request_part"})
+    assert wait(client, lambda s: "F1O1P2" in s["session"]["supply"]["staged"].values())
+    assert client.get("/api/kit/supply/state").json()["blocked"] is None
     client.post("/api/kit/session/stop")
+
+
+def test_stop_button_never_500s(client):
+    def boom():
+        raise RuntimeError("RTDE gone")
+    backend = client.app.state.robot_bridge.backend
+    backend.stop = boom
+    r = client.post("/api/kit/robot/stop")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False and "RTDE gone" in body["error"]
+    assert body["state"]["latched"] == "estop"      # latched even though the backend failed
+
+
+def test_connect_endpoint_and_mat_cleared_event(client):
+    cleared = []
+    r = client.post("/api/kit/robot/connect")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert r.json()["state"]["connected"] is True
+    assert client.post("/api/kit/event", json={"type": "mat_cleared"}).status_code == 200
+
+
+def test_robot_endpoints_503_without_a_bridge(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from hub.kit_study.router import build_kit_router
+    from hub.kit_study.session import KitSession
+
+    bus = MessageBus()
+    db = Database(tmp_path / "hri.db")
+    ctrl = RecordingController(bus, db, tmp_path / "recordings")
+    app = FastAPI()
+    app.include_router(build_kit_router(KitSession(bus, db, ctrl), bus, bridge=None))
+    with TestClient(app) as c:
+        for path in ("/api/kit/robot/state", "/api/kit/supply/state"):
+            assert c.get(path).status_code == 503
+        for path in ("/api/kit/robot/home", "/api/kit/robot/stop", "/api/kit/robot/connect",
+                     "/api/kit/robot/open_gripper"):
+            assert c.post(path).status_code == 503
+        assert c.post("/api/kit/supply/profile", json={"lookahead": 1}).status_code == 503
 
 
 def test_profile_requires_session(client):

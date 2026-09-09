@@ -6,6 +6,7 @@ import pytest
 from hub.bus import MessageBus
 from hub.kit_study.orders import load_block
 from hub.kit_study.robot_bridge import RobotBridge
+from hub.kit_study.robotd.base import ProtectiveStop
 from hub.kit_study.robotd.sim import SimBackend
 from hub.kit_study.supply import SupplyController, SupplyProfile
 from hub.kit_study.task_engine import TaskEngine
@@ -35,6 +36,134 @@ def settle(bridge, ctrl, pred, timeout=2.0):
             return True
         time.sleep(0.01)
     return pred(ctrl.status())
+
+
+class Recorder(SimBackend):
+    """SimBackend that records every motion call, so 'the robot never moved' is testable."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.calls = []
+
+    def pick(self, depot_slot):
+        self.calls.append(("pick", depot_slot))
+        return super().pick(depot_slot)
+
+    def place(self, staging_slot):
+        self.calls.append(("place", staging_slot))
+        return super().place(staging_slot)
+
+
+def stack_with(backend, profile):
+    bus = MessageBus()
+    events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    block = load_block(F1)
+    bridge = RobotBridge(bus, backend, monitor_interval=5.0)
+    bridge.start()
+    eng = TaskEngine(bus, block, rng=random.Random(0))
+    ctrl = SupplyController(bus, bridge, block, profile)
+    ctrl.start()
+    return bus, events, eng, bridge, ctrl
+
+
+def until(pred, timeout=2.0):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return pred()
+
+
+def test_estop_returns_part_to_pending_and_no_motion_until_home():
+    """C1: pressing STOP must not be followed by motion, and the aborted part is not 'failed'."""
+    backend = Recorder(timing={"home": 0.05, "pick": 0.25, "place": 0.25, "open_gripper": 0.05,
+                               "noise_std": 0.0}, rng=random.Random(0))
+    bus, events, eng, bridge, ctrl = stack_with(backend, SupplyProfile(lookahead=2, side="C"))
+    eng.start_block()
+    assert until(lambda: backend.calls, 2.0)             # a supply is in flight
+
+    bridge.estop()
+    n_calls = len(backend.calls)
+    assert bridge.wait_idle(2.0)
+    time.sleep(0.3)                                      # ample time for a stray re-submit
+    assert backend.calls[n_calls:] == [], "the robot moved again after STOP"
+
+    st = ctrl.status()
+    assert st["paused"] is True and st["inflight"] == [] and st["failed"] == []
+    assert st["blocked"]["reason"] == "estop"
+    assert ctrl._retried == set(), "an aborted part must not burn its retry"
+    failed = [d for t, d in events if t == "robot.skill_failed"]
+    assert failed and failed[-1]["aborted"] is True
+
+    # even a direct supply request is refused by the bridge while latched
+    assert bridge.supply("F1O1P4", "BL4", "R") is None
+    assert [d for t, d in events if t == "robot.rejected"]
+
+    # home resumes: the same part is supplied again, without a retry being consumed
+    assert bridge.submit("home") is not None
+    assert until(lambda: ctrl.status()["paused"] is False, 2.0)
+    assert settle(bridge, ctrl, lambda s: "F1O1P1" in s["staged"].values(), timeout=3.0)
+    assert ctrl.status()["blocked"] is None and ctrl.status()["failed"] == []
+    bridge.stop(); ctrl.stop()
+
+
+def test_protective_stop_does_not_cascade_through_the_order():
+    """C3: a protective stop is a robot fault — one failure, no terminal parts, no re-submits."""
+    class PS(Recorder):
+        armed = True
+        def pick(self, depot_slot):
+            if self.armed:
+                self.calls.append(("pick", depot_slot))
+                raise ProtectiveStop("protective stop")
+            return super().pick(depot_slot)
+
+    backend = PS(timing=FAST, rng=random.Random(0))
+    bus, events, eng, bridge, ctrl = stack_with(backend, SupplyProfile(lookahead=2, side="C"))
+    eng.start_block()
+    assert until(lambda: ctrl.status()["blocked"] is not None, 2.0)
+    time.sleep(0.2)                                      # would be enough for a cascade
+
+    st = ctrl.status()
+    assert st["blocked"]["reason"] == "protective_stop"
+    assert st["failed"] == [] and st["inflight"] == []
+    assert len([t for t, _ in events if t == "robot.skill_failed"]) == 1
+    assert len(backend.calls) == 1, f"kept moving after a protective stop: {backend.calls}"
+    # the wizard is told once, not once per event that reports the same stop
+    assert len([t for t, _ in events if t == "supply.blocked"]) == 1
+
+    backend.armed = False
+    assert bridge.submit("home") is not None
+    assert settle(bridge, ctrl, lambda s: "F1O1P1" in s["staged"].values(), timeout=3.0)
+    assert ctrl.status()["blocked"] is None
+    bridge.stop(); ctrl.stop()
+
+
+def test_staged_parts_survive_the_order_change_until_the_mat_is_cleared():
+    """C5: leftovers from a timed-out order occupy their slots in the next order."""
+    bus, events, eng, bridge, ctrl = stack(SupplyProfile(lookahead=2, side="C"))
+    bus.publish("task.order_started", {"order_id": "O1", "order_index": 0, "kind": "block",
+                                       "n_parts": 4, "time_limit_s": 120})
+    assert settle(bridge, ctrl, lambda s: len(s["staged"]) == 2)
+    leftovers = dict(ctrl.status()["staged"])            # 2 parts of O1, still on the mat
+
+    bus.publish("task.order_completed", {"order_id": "O1", "reason": "timeout"})
+    bus.publish("task.order_started", {"order_id": "O2", "order_index": 1, "kind": "rush",
+                                       "n_parts": 5, "time_limit_s": 60})
+    assert settle(bridge, ctrl, lambda s: len(s["staged"]) == 3)
+    st = ctrl.status()
+    for slot, pid in leftovers.items():
+        assert st["staged"][slot] == pid, "a leftover brick was overwritten"
+    new = {s: p for s, p in st["staged"].items() if s not in leftovers}
+    assert list(new) == ["R"] and list(new.values()) == ["F1O2P1"]
+
+    # the wizard sweeps the mat -> all three slots free again, supply refills for O2
+    bus.publish("wizard.mat_cleared", {})
+    assert settle(bridge, ctrl, lambda s: all(v.startswith("F1O2") for v in s["staged"].values())
+                  and len(s["staged"]) == 2)
+    assert not (set(leftovers.values()) & set(ctrl.status()["staged"].values()))
+    bridge.stop(); ctrl.stop()
 
 
 def test_lookahead_two_prestages_two_parts_then_refills():

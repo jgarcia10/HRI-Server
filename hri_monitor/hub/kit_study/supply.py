@@ -34,7 +34,9 @@ class SupplyProfile:
 class SupplyController:
     _TOPICS = ("task.order_started", "task.part_placed", "task.order_completed", "task.block_completed",
                "task.step", "task.perturbation",
-               "robot.part_staged", "robot.skill_failed", "wizard.request_part", "wizard.slot_cleared")
+               "robot.part_staged", "robot.skill_failed", "robot.estop", "robot.resumed",
+               "robot.rejected",
+               "wizard.request_part", "wizard.slot_cleared", "wizard.mat_cleared")
 
     def __init__(self, bus, bridge, block: BlockSpec, profile: SupplyProfile | None = None):
         self.bus = bus
@@ -54,10 +56,18 @@ class SupplyController:
         self._blocked_published: bool = False  # track published state to avoid spam
         self._requests = 0
         self._active = False
+        # C1/C3: the robot is latched (STOP or protective stop); supply must not submit anything
+        # until a successful `home` publishes robot.resumed.
+        self._paused: bool = False
+        self._pause_reason: str | None = None
 
     # -------------------------------------------------------------- lifecycle
     def start(self) -> None:
         self._active = True
+        # a session started while the robot is latched begins paused (the wizard must home first)
+        latched = getattr(self.bridge, "latched", lambda: None)()
+        if latched:
+            self._paused, self._pause_reason = True, latched
         for t in self._TOPICS:
             self.bus.subscribe(t, self._on_bus)
         self.bridge.submit("set_pace", level=self.profile.pace)
@@ -85,6 +95,7 @@ class SupplyController:
                        None)
             return {"profile": asdict(self.profile),
                     "order_id": self._order.id if self._order else None,
+                    "paused": self._paused,
                     "staged": dict(self._staged),
                     "inflight": list(self._inflight),
                     "supplied": sorted(self._supplied),
@@ -101,7 +112,10 @@ class SupplyController:
             with self._lock:
                 self._order = self.block.orders[int(data["order_index"])]
                 self._plan = list(self._order.parts)
-                self._supplied.clear(); self._inflight.clear(); self._staged.clear()
+                # C5: `_staged` survives the order change — leftover bricks from a timed-out
+                # order are physically still on the mat. Only task.part_placed,
+                # wizard.slot_cleared or wizard.mat_cleared free a slot.
+                self._supplied.clear(); self._inflight.clear()
                 self._retried.clear(); self._failed.clear()
                 self._current_part_id = None
                 self._blocked = None; self._blocked_published = False
@@ -141,26 +155,59 @@ class SupplyController:
             self._emit(); self._replenish()
         elif topic == "robot.skill_failed":
             pid = (data.get("args") or {}).get("part_id")
-            pid_was_inflight = False
+            # C3: a protective stop is a *robot* fault, not a part fault — the part goes back to
+            # pending and supply pauses; without this every remaining part fails in a cascade.
+            robot_fault = bool(data.get("protective_stop")) or bool(data.get("aborted"))
             with self._lock:
+                if data.get("protective_stop"):
+                    # pause immediately: the bridge's robot.estop arrives only after this callback
+                    self._paused = True
+                    self._pause_reason = "protective_stop"
+                elif data.get("aborted"):
+                    self._paused = True
+                    self._pause_reason = self._pause_reason or "estop"
                 if pid and pid in self._inflight:
-                    pid_was_inflight = True
                     del self._inflight[pid]
-                    protective_stop = data.get("protective_stop")
-                    if protective_stop:
-                        # F1+F4: protective stop → terminal failure
-                        self._failed.add(pid)
-                    elif pid not in self._retried:
-                        # F1+F4: first failure → mark retried and retry
-                        self._retried.add(pid)
-                    else:
-                        # F1+F4: second failure → terminal
-                        self._failed.add(pid)
-                    # N4: only reset blocked if we handled this pid
-                    self._blocked = None; self._blocked_published = False
+                    if not robot_fault:
+                        if pid not in self._retried:
+                            # F1+F4: first genuine grasp failure → mark retried and retry
+                            self._retried.add(pid)
+                        else:
+                            # F1+F4: second failure → terminal
+                            self._failed.add(pid)
+                        # N4: only reset blocked if we handled this pid
+                        self._blocked = None; self._blocked_published = False
             self._emit()
             # Always replenish to handle retry or blocked detection
             self._replenish()
+        elif topic == "robot.estop":
+            reason = data.get("reason") or "estop"
+            with self._lock:
+                if not self._paused or self._pause_reason != reason:
+                    # a repeat of a pause we already announced must not re-publish supply.blocked
+                    self._blocked = None; self._blocked_published = False
+                self._paused = True
+                self._pause_reason = reason
+                # C1: parts in flight when the robot stopped simply go back to pending —
+                # they were never picked, so they are neither retried nor failed.
+                self._inflight.clear()
+            self._emit(); self._replenish()
+        elif topic == "robot.resumed":
+            with self._lock:
+                self._paused = False
+                self._pause_reason = None
+                self._blocked = None; self._blocked_published = False
+            self._emit(); self._replenish()
+        elif topic == "robot.rejected":
+            if data.get("skill") == "supply":
+                pid = (data.get("args") or {}).get("part_id")
+                with self._lock:
+                    if pid and pid in self._inflight:
+                        del self._inflight[pid]     # back to pending, no counters
+                    # a rejection means the bridge is latched; stop offering it work
+                    self._paused = True
+                    self._pause_reason = data.get("reason") or "estop"
+                self._emit(); self._replenish()
         elif topic == "wizard.request_part":
             with self._lock:
                 self._requests += 1
@@ -177,6 +224,12 @@ class SupplyController:
                     del self._staged[slot]
                 self._blocked = None; self._blocked_published = False
             self._emit(); self._replenish()
+        elif topic == "wizard.mat_cleared":
+            # C5: the whole staging mat was swept (typically after a timed-out order)
+            with self._lock:
+                self._staged.clear()
+                self._blocked = None; self._blocked_published = False
+            self._emit(); self._replenish()
 
     # --------------------------------------------------------------- policy
     def _free_slot(self) -> str | None:
@@ -191,7 +244,22 @@ class SupplyController:
         with self._lock:
             if self._order is None:
                 return
-            ahead = len(self._staged) + len(self._inflight)
+            if self._paused:
+                # C1/C3: while the robot is latched nothing is submitted; the UI is told why.
+                self._blocked = {"reason": self._pause_reason or "estop",
+                                 "needed": self._current_part_id, "staged": dict(self._staged)}
+                if not self._blocked_published:
+                    to_publish_blocked = dict(self._blocked)
+                    self._blocked_published = True
+        if self._paused:
+            if to_publish_blocked is not None:
+                self.bus.publish("supply.blocked", to_publish_blocked)
+            return
+        with self._lock:
+            # C5: leftover parts from a previous order occupy slots (see _free_slot) but must not
+            # count against the look-ahead budget for the current order.
+            plan_ids = {p.id for p in self._plan}
+            ahead = len([pid for pid in self._staged.values() if pid in plan_ids]) + len(self._inflight)
             budget = self.profile.lookahead
             if budget == 0:
                 budget = 1 if (on_request or self._requests > len(self._supplied) + len(self._inflight)) else 0
@@ -261,11 +329,18 @@ class SupplyController:
             elif not is_blocked and self._blocked_published:
                 self._blocked_published = False
 
-        # N1: Publish decisions and blocked outside the lock
+        # N1: Publish decisions and blocked outside the lock. The decision is narrated only once
+        # the job is actually queued — a rejected submit (latched bridge) is not a decision.
+        submitted = False
         for part, slot, reason in decisions:
+            if self.bridge.supply(part.id, part.depot_slot, slot) is None:
+                with self._lock:
+                    if self._inflight.get(part.id) == slot:
+                        del self._inflight[part.id]
+                continue
+            submitted = True
             self.bus.publish("supply.decision", {"part_id": part.id, "slot": slot, "reason": reason})
-            self.bridge.supply(part.id, part.depot_slot, slot)
-        if decisions:
+        if submitted:
             self._emit()
 
         # N1: Publish blocked event outside lock (once per transition, no spam)
