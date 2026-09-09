@@ -1,12 +1,33 @@
-"""UR5 backend over ur_rtde. Fixed taught waypoints; no planning; PolyScope safety is authoritative."""
+"""UR5 backend over ur_rtde. Fixed taught waypoints; no planning; PolyScope safety is authoritative.
+
+Threading contract (important — the bridge runs skills on a worker thread while the API
+thread serves /robot/stop and a ~3 Hz state monitor):
+
+* Every `RTDEControlInterface` (``self.ctrl``) call happens on the thread that runs the
+  skill — never anywhere else.  The one exception is :meth:`disconnect`, which is a
+  shutdown path.
+* Moves are issued **asynchronously** (``moveJ(q, v, a, True)``).  ur_rtde:
+  "If async is true it is possible to stop a move command using either the stopJ or stopL
+  function.  Default is false, this means the function will block until the movement has
+  completed."  A blocking move cannot be interrupted, so `stop()` would be a no-op for up
+  to a whole cycle and two threads would write the same control socket.
+* :meth:`stop` therefore only latches ``self._abort`` (a ``threading.Event``).  The worker
+  sees it on its next 50 ms poll and calls ``stopJ``/``stopL`` itself, then raises
+  :class:`Aborted`.  The latch is cleared by :meth:`home` (the resume path) or
+  :meth:`connect`.
+* :meth:`state` reads only the receive interface and local flags, so it is cheap and safe
+  to call from another thread while a move is running.
+"""
 from __future__ import annotations
 
+import math
+import threading
 import time
 from pathlib import Path
 
 import yaml
 
-from .base import (RobotBackend, RobotError, ProtectiveStop, RobotState, STAGING_SLOTS,
+from .base import (Aborted, RobotBackend, RobotError, ProtectiveStop, RobotState, STAGING_SLOTS,
                    validate_depot_slot, validate_pace, validate_staging_slot)
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
@@ -14,6 +35,16 @@ DEFAULT_SPEEDS = {
     "normal": {"joint_v": 0.6, "joint_a": 0.8, "lin_v": 0.15, "lin_a": 0.5},
     "slow":   {"joint_v": 0.3, "joint_a": 0.5, "lin_v": 0.08, "lin_a": 0.3},
 }
+
+POLL_S = 0.05                # async-progress poll period
+MOVE_TIMEOUT_S = 20.0        # a taught move never takes this long; longer == something is wrong
+STOP_TIMEOUT_S = 3.0         # bounded wait for the controller to report the stop took effect
+REACH_GRACE_S = 0.3          # allow the arm to settle before declaring "target not reached"
+Q_TOL_RAD = 0.02             # per-joint tolerance for "moveJ reached its target"
+P_TOL_M = 0.003              # TCP position tolerance for "moveL reached its target"
+IK_BRANCH_TOL_RAD = 0.5      # IK result must stay on the taught branch
+AT_REST_QD = 0.01            # rad/s below which the arm counts as stopped
+STOP_DECEL = 2.0             # stopJ/stopL deceleration
 
 
 def _default_factory(ip: str):
@@ -47,18 +78,26 @@ class URBackend(RobotBackend):
     name = "ur5"
 
     def __init__(self, ip: str, calibration: dict, speeds: dict | None = None,
-                 gripper_settle_s: float = 1.0, rtde_factory=None, sleep=time.sleep):
+                 gripper_settle_s: float = 1.0, rtde_factory=None,
+                 poll_s: float = POLL_S, move_timeout_s: float = MOVE_TIMEOUT_S,
+                 stop_timeout_s: float = STOP_TIMEOUT_S, reach_grace_s: float = REACH_GRACE_S,
+                 clock=time.monotonic):
         self.ip = ip
         self.cal = calibration
         self.speeds = speeds or DEFAULT_SPEEDS
         self.settle = float(gripper_settle_s)
         self._factory = rtde_factory or _default_factory
-        self._sleep = sleep
+        self.poll_s = float(poll_s)
+        self.move_timeout_s = float(move_timeout_s)
+        self.stop_timeout_s = float(stop_timeout_s)
+        self.reach_grace_s = float(reach_grace_s)
+        self._clock = clock
         self.ctrl = self.recv = self.io = None
         self._pace = "normal"
         self._busy = False
         self._gripper_closed = False
         self._last = None
+        self._abort = threading.Event()   # set by stop() (any thread), acted on by the worker
 
     # -------------------------------------------------------------- lifecycle
     def connect(self) -> None:
@@ -66,30 +105,36 @@ class URBackend(RobotBackend):
             self.ctrl, self.recv, self.io = self._factory(self.ip)
         except Exception as e:
             raise RobotError(f"cannot connect to UR at {self.ip}: {e}") from e
+        self._abort.clear()
 
     def disconnect(self) -> None:
-        if self.ctrl is not None:
+        """Shutdown path — the only place `ctrl` may be touched from another thread.
+
+        Order matters: latch the abort flag first so a worker thread that is mid-move
+        stops polling and issues its own stopJ/stopL, then close control → receive → io.
+        """
+        self._abort.set()
+        for iface in (self.ctrl, self.recv, self.io):
+            if iface is None:
+                continue
             try:
-                self.ctrl.disconnect()
-            except Exception:
-                pass
-        if self.recv is not None:
-            try:
-                disconnect_fn = getattr(self.recv, "disconnect", None)
-                if disconnect_fn:
-                    disconnect_fn()
-            except Exception:
-                pass
-        if self.io is not None:
-            try:
-                disconnect_fn = getattr(self.io, "disconnect", None)
-                if disconnect_fn:
-                    disconnect_fn()
+                close = getattr(iface, "disconnect", None)
+                if close:
+                    close()
             except Exception:
                 pass
         self.ctrl = self.recv = self.io = None
 
     # ----------------------------------------------------------------- guards
+    @property
+    def stop_latched(self) -> bool:
+        """True while a stop() is latched; only home() (or a reconnect) clears it."""
+        return self._abort.is_set()
+
+    def _check_abort(self) -> None:
+        if self._abort.is_set():
+            raise Aborted("robot stopped by stop(); send home to resume")
+
     def _require(self) -> None:
         if self.ctrl is None or self.recv is None:
             raise RobotError("UR backend not connected")
@@ -101,37 +146,147 @@ class URBackend(RobotBackend):
     def _sp(self):
         return self.speeds[self._pace]
 
-    def _moveJ(self, q):
-        sp = self._sp()
-        if not self.ctrl.moveJ(list(q), sp["joint_v"], sp["joint_a"]):
+    # ------------------------------------------------------------ async moves
+    def _async_state(self) -> tuple[bool, int]:
+        """(running, raw value) of the current async operation. Worker thread only.
+
+        ur_rtde `getAsyncOperationProgress()`: "<0 Indicates that no async operation is
+        running or that an async operation has finished. The returned values of two
+        consecutive async operations is never equal. Normally the returned values are
+        toggled between -1 and -2. … >= 0 Indicates the progress of an async operation."
+        `getAsyncOperationProgressEx()` is the non-deprecated form and exposes the same
+        thing as `isAsyncOperationRunning()` / `value()`.
+        """
+        ex = getattr(self.ctrl, "getAsyncOperationProgressEx", None)
+        if ex is not None:
+            st = ex()
+            return bool(st.isAsyncOperationRunning()), int(st.value())
+        p = int(self.ctrl.getAsyncOperationProgress())
+        return p >= 0, p
+
+    def _at_rest(self) -> bool:
+        getter = getattr(self.recv, "getActualQd", None)
+        if getter is None:
+            return True
+        try:
+            return all(abs(float(v)) < AT_REST_QD for v in getter())
+        except Exception:
+            return False
+
+    def _stop_motion(self, kind: str) -> None:
+        """Decelerate the arm from the worker thread, then report the abort."""
+        stop = getattr(self.ctrl, "stopL" if kind == "L" else "stopJ")
+        try:
+            stop(STOP_DECEL)
+        except Exception as e:            # comms died mid-stop: still an abort, not a failure
+            raise Aborted(f"stop requested; stop{kind} failed: {e}") from e
+        deadline = self._clock() + self.stop_timeout_s
+        while self._clock() < deadline:
+            try:
+                running, _ = self._async_state()
+            except Exception:
+                break
+            if not running:
+                break
+            time.sleep(self.poll_s)       # _abort is already set, so don't wait on it
+        raise Aborted(f"motion stopped by stop() during move{kind}")
+
+    def _wait_async(self, kind: str, baseline: int, reached) -> None:
+        """Poll until the async operation finishes, the stop latch fires, or we time out."""
+        started = False
+        deadline = self._clock() + self.move_timeout_s
+        while True:
+            if self._abort.is_set():
+                self._stop_motion(kind)   # always raises Aborted
+            running, value = self._async_state()
+            if running:
+                started = True
+            elif started or value != baseline:
+                return                    # a *new* async operation has finished
+            elif reached() and self._at_rest():
+                return                    # controller never reported progress, but we are there
+            if self._clock() > deadline:
+                raise RobotError("move timeout")
+            if self._abort.wait(self.poll_s):
+                self._stop_motion(kind)   # always raises Aborted
+
+    def _move(self, kind: str, issue, reached) -> None:
+        self._check_abort()
+        baseline = self._async_state()[1]
+        if not issue():
             if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
                 raise ProtectiveStop("protective/emergency stop during motion")
-            raise RobotError("moveJ refused")
+            raise RobotError(f"move{kind} refused")
+        self._wait_async(kind, baseline, reached)
+        if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
+            raise ProtectiveStop("protective/emergency stop during motion")
+        deadline = self._clock() + self.reach_grace_s
+        while not reached():
+            if self._clock() >= deadline:
+                raise RobotError("target not reached")
+            time.sleep(min(self.poll_s, 0.05))
+
+    def _moveJ(self, q):
+        sp = self._sp()
+        target = [float(x) for x in q]
+        self._move("J", lambda: self.ctrl.moveJ(target, sp["joint_v"], sp["joint_a"], True),
+                   lambda: self._q_reached(target))
 
     def _moveL(self, pose):
         sp = self._sp()
-        if not self.ctrl.moveL(list(pose), sp["lin_v"], sp["lin_a"]):
-            if self.recv.isEmergencyStopped() or self.recv.isProtectiveStopped():
-                raise ProtectiveStop("protective/emergency stop during motion")
-            raise RobotError("moveL refused")
+        target = [float(x) for x in pose]
+        self._move("L", lambda: self.ctrl.moveL(target, sp["lin_v"], sp["lin_a"], True),
+                   lambda: self._tcp_reached(target))
 
-    def _approach_and(self, node: dict, close: bool) -> None:
+    def _q_reached(self, q) -> bool:
+        try:
+            actual = [float(x) for x in self.recv.getActualQ()]
+        except Exception:
+            return False
+        return len(actual) >= 6 and max(abs(a - b) for a, b in zip(actual, q)) < Q_TOL_RAD
+
+    def _tcp_reached(self, pose) -> bool:
+        try:
+            actual = [float(x) for x in self.recv.getActualTCPPose()]
+        except Exception:
+            return False
+        return len(actual) >= 3 and max(abs(a - b) for a, b in zip(actual[:3], pose[:3])) < P_TOL_M
+
+    # -------------------------------------------------------------------- IK
+    def _ik(self, pose, node, slot: str):
+        """Inverse kinematics for an approach pose, validated against the taught branch."""
+        try:
+            sol = self.ctrl.getInverseKinematics(list(pose), qnear=list(node["q"]))
+        except Exception as e:
+            raise RobotError(f"IK solution rejected for {slot}: {e}") from e
+        ref = [float(x) for x in node["q"]]
+        try:
+            q = [float(x) for x in sol]
+        except (TypeError, ValueError):
+            raise RobotError(f"IK solution rejected for {slot}") from None
+        if (len(q) != 6 or not all(math.isfinite(x) for x in q)
+                or max(abs(a - b) for a, b in zip(q, ref)) > IK_BRANCH_TOL_RAD):
+            raise RobotError(f"IK solution rejected for {slot}")
+        return q
+
+    # ---------------------------------------------------------------- motions
+    def _approach_and(self, slot: str, node: dict, close: bool) -> None:
         """transit → above target → straight down → gripper → straight up."""
         dz = float(self.cal["approach_dz_m"])
         pose = list(node["pose"])
         above = pose[:2] + [pose[2] + dz] + pose[3:]
         self._moveJ(self.cal["transit"]["q"])
-        q_above = self.ctrl.getInverseKinematics(above, qnear=list(node["q"]))
-        self._moveJ(q_above)
+        self._moveJ(self._ik(above, node, slot))
         self._moveL(pose)
         if not self.io.setToolDigitalOut(GRIPPER_TOOL_DO, close):
             raise RobotError("gripper command refused")
         self._gripper_closed = close
-        if self.settle:
-            self._sleep(self.settle)
+        if self.settle and self._abort.wait(self.settle):
+            raise Aborted("motion stopped by stop() during gripper settle")
         self._moveL(above)
 
     def _run(self, skill, fn):
+        self._check_abort()
         self._require()
         self._busy = True
         try:
@@ -140,8 +295,9 @@ class URBackend(RobotBackend):
             self._busy = False
             self._last = skill
 
-    # ---------------------------------------------------------------- skills
+    # ----------------------------------------------------------------- skills
     def home(self) -> None:
+        self._abort.clear()          # home is the resume path after a stop()
         self._run("home", lambda: self._moveJ(self.cal["home"]["q"]))
 
     def pick(self, depot_slot: str) -> None:
@@ -149,42 +305,49 @@ class URBackend(RobotBackend):
         node = self.cal.get("depot", {}).get(depot_slot)
         if node is None:
             raise ValueError(f"depot slot {depot_slot} not in calibration")
-        self._run("pick", lambda: self._approach_and(node, close=True))
+        self._run("pick", lambda: self._approach_and(depot_slot, node, close=True))
 
     def place(self, staging_slot: str) -> None:
         validate_staging_slot(staging_slot)
         node = self.cal["staging"][staging_slot]
-        self._run("place", lambda: self._approach_and(node, close=False))
+        self._run("place", lambda: self._approach_and(staging_slot, node, close=False))
 
     def open_gripper(self) -> None:
         def _open():
             if not self.io.setToolDigitalOut(GRIPPER_TOOL_DO, False):
                 raise RobotError("gripper command refused")
             self._gripper_closed = False
-            if self.settle:
-                self._sleep(self.settle)
+            if self.settle and self._abort.wait(self.settle):
+                raise Aborted("motion stopped by stop() during gripper settle")
         self._run("open_gripper", _open)
 
     def set_pace(self, level: str) -> None:
-        self._pace = validate_pace(level)
+        self._pace = validate_pace(level)   # no motion — allowed while a stop is latched
 
     def stop(self) -> None:
-        if self.ctrl is not None:
-            try:
-                self.ctrl.stopJ(2.0)
-            except Exception:
-                pass
-        self._busy = False
+        """Latch the stop. Safe from any thread: it never touches the control interface.
+
+        The worker sees the flag within one poll period (~50 ms) and issues stopJ/stopL
+        itself, then raises `Aborted`. `_busy` is *not* cleared here — the worker is still
+        inside the move until it unwinds.
+        """
+        self._abort.set()
 
     def state(self) -> RobotState:
-        if self.recv is None:
-            safety = "disconnected"
-        elif self.recv.isEmergencyStopped():
-            safety = "estop"
-        elif self.recv.isProtectiveStopped():
-            safety = "protective_stop"
-        else:
-            safety = "normal"
-        return RobotState(connected=self.ctrl is not None, backend=self.name, busy=self._busy,
+        """Cheap, thread-safe snapshot: receive interface and local flags only, never `ctrl`."""
+        recv = self.recv
+        connected = self.ctrl is not None and recv is not None
+        safety = "disconnected"
+        if connected:
+            try:
+                if recv.isEmergencyStopped():
+                    safety = "estop"
+                elif recv.isProtectiveStopped():
+                    safety = "protective_stop"
+                else:
+                    safety = "normal"
+            except Exception:
+                connected, safety = False, "disconnected"
+        return RobotState(connected=connected, backend=self.name, busy=self._busy,
                           gripper_closed=self._gripper_closed, pace=self._pace, last_skill=self._last,
                           safety=safety)
