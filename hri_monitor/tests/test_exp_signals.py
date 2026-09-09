@@ -28,4 +28,34 @@ def test_recorded_topics_set():
     assert RECORDED_TOPICS == {
         "shimmer.gsr", "shimmer.ppg", "ppg.hr", "ppg.hrv",
         "rgb.blink", "thermal.temps", "model.estimates",
+        "task.countdown", "task.step", "task.order_started",
+        "task.part_placed", "task.perturbation",
+        "wizard.reposition", "wizard.speech", "wizard.request_part", "wizard.slot_cleared",
+        "wizard.mat_cleared",
+        "robot.skill_done", "robot.part_staged", "robot.skill_failed", "robot.estop",
+        "robot.rejected", "robot.resumed",
+        "supply.decision", "supply.blocked",
+        "anima.perception", "anima.verdict", "anima.error",
     }
+
+
+def test_skill_done_is_one_series_per_skill():
+    """I4: mixing set_pace/home/supply durations makes the M4 supply-cycle p95 uncomputable."""
+    assert sample_rows("robot.skill_done", {"skill": "supply", "duration_s": 4.2}) == \
+        [("robot.supply_duration_s", 4.2)]
+    assert sample_rows("robot.skill_done", {"skill": "home", "duration_s": 3.0}) == \
+        [("robot.home_duration_s", 3.0)]
+
+
+def test_mat_cleared_is_an_impulse():
+    """C5: the mat sweep frees every slot — without it in the CSV a supply gap around an
+    order transition is unexplainable."""
+    assert sample_rows("wizard.mat_cleared", {}) == [("wizard.mat_cleared", 1.0)]
+    assert sample_rows("wizard.slot_cleared", {"slot": "L"}) == [("wizard.slot_cleared", 1.0)]
+
+
+def test_robot_latch_topics_are_impulses():
+    assert sample_rows("robot.rejected", {"skill": "supply", "args": {}, "reason": "estop"}) == \
+        [("robot.rejected", 1.0)]
+    assert sample_rows("robot.resumed", {}) == [("robot.resumed", 1.0)]
+    assert sample_rows("anima.error", {"kind": "perception", "error": "boom"}) == [("anima.error", 1.0)]

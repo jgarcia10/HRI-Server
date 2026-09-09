@@ -1,6 +1,9 @@
 import asyncio
+import logging
+import os
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -12,18 +15,53 @@ from . import assets, bluetooth, cameras
 from .config import save_config
 from .frames import FrameStore
 
+log = logging.getLogger(__name__)
+
 # Numeric topics forwarded to the dashboard. Frame topics carry numpy arrays
 # and are served via MJPEG instead — never JSON.
 STREAM_TOPICS = {
     "shimmer.gsr", "shimmer.ppg", "thermal.temps", "rgb.blink",
-    "ppg.hr", "ppg.hrv", "model.estimates",
+    "ppg.hr", "ppg.hrv", "model.estimates", "task.state", "robot.state", "supply.state",
+    "anima.perception", "anima.verdict",
+    "robot.rejected", "robot.resumed", "robot.estop", "supply.blocked",
+    "wizard.mat_cleared",
 }
 WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
 
 
-def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments=None) -> FastAPI:
-    app = FastAPI(title="HRI Monitor")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    # Shutdown: never leave the RTDE script owning the socket when the process exits
+    # (Ctrl-C). Order matters — stop the session first (it unsubscribes supply/engine so
+    # nothing submits new jobs, waits up to _STOP_WAIT_S for the in-flight skill so the
+    # brick is not dropped mid-air, and closes the recording), then estop whatever is still
+    # queued, then tear down the bridge worker/backend connection, then the LLM worker.
+    # Ctrl-C is therefore not an emergency stop; the physical E-stop and the wizard STOP are.
+    kit_session = getattr(app.state, "kit_session", None)
+    if kit_session is not None:
+        try:
+            kit_session.stop()
+        except Exception:
+            log.exception("kit_session.stop() during shutdown failed")
+    bridge = getattr(app.state, "robot_bridge", None)
+    if bridge is not None:
+        try:
+            st = bridge.state()
+            if st.get("busy") or st.get("queue", 0):
+                bridge.estop()
+        except Exception:
+            log.exception("robot_bridge.estop() during shutdown failed")
+        bridge.stop()
+    anima_llm = getattr(app.state, "anima_llm", None)
+    if anima_llm is not None:
+        anima_llm.stop()
+
+
+def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments=None,
+              kit_mode: dict | None = None) -> FastAPI:
+    app = FastAPI(title="HRI Monitor", lifespan=_lifespan)
     frames = FrameStore(bus, {"thermal": "thermal.frame", "rgb": "rgb.frame"})
     app.state.frames = frames
 
@@ -33,6 +71,48 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         app.state.recording_controller = experiments["controller"]
         from .analysis.router import build_analysis_router
         app.include_router(build_analysis_router(experiments["db"]))
+        from .kit_study.router import build_kit_router
+        from .kit_study.session import KitSession
+        from .kit_study.robot_bridge import RobotBridge
+        from .kit_study.runtime import build_backend, load_mode
+        mode_cfg = kit_mode or load_mode("sim")
+        bridge = RobotBridge(bus, build_backend(mode_cfg))
+        bridge.start()
+        kit_session = KitSession(bus, experiments["db"], experiments["controller"],
+                                 bridge=bridge, default_profile=mode_cfg.get("supply"))
+        app.include_router(build_kit_router(kit_session, bus, bridge))
+        app.state.kit_session = kit_session
+        app.state.robot_bridge = bridge
+
+        from .kit_study.anima_llm import AnimaLLM
+        from anima.llm.backend import make_backend
+        import yaml as _yaml
+        llm_cfg = _yaml.safe_load((Path(__file__).parent / "kit_study" / "configs" / "llm.yaml").read_text())
+        # cache_dir applies to any real backend (anthropic/openai) and defaults to None (no
+        # on-disk cache) — a shared cache across participants would fabricate perception, see
+        # RUNBOOK §D. timeout_s/max_retries/reasoning_budget only apply to OpenAIBackend.
+        backend_kwargs: dict = {}
+        if "cache_dir" in llm_cfg:
+            backend_kwargs["cache_dir"] = llm_cfg["cache_dir"]
+        provider = llm_cfg.get("provider", "mock")
+        if provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
+            # Rehearsals without a key must still run; the CSV then carries mock anima rows.
+            log.warning("llm.yaml provider=openai but OPENAI_API_KEY is not set — "
+                        "falling back to the mock backend (put the key in hri_monitor/.env)")
+            provider = "mock"
+        if provider == "openai":
+            if "timeout_s" in llm_cfg:
+                backend_kwargs["timeout_s"] = float(llm_cfg["timeout_s"])
+            if "max_retries" in llm_cfg:
+                backend_kwargs["max_retries"] = int(llm_cfg["max_retries"])
+            if "reasoning_budget" in llm_cfg:
+                backend_kwargs["reasoning_budget"] = int(llm_cfg["reasoning_budget"])
+        anima_llm = AnimaLLM(bus, make_backend(provider=provider, model=llm_cfg.get("model"), **backend_kwargs),
+                             mission=llm_cfg["mission"], judge_every=int(llm_cfg.get("judge_every", 2)),
+                             history=int(llm_cfg.get("history", 6)))
+        anima_llm.start()
+        app.state.anima_llm = anima_llm
+        kit_session.anima_llm = anima_llm
 
     @app.get("/api/status")
     def status():

@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Brain, Cpu, FlaskConical, Monitor, Moon, Settings, Sun,
+  Activity, BarChart3, Bot, Brain, Cpu, FlaskConical, Monitor, Moon, Settings, Sun,
 } from "lucide-react";
 import { useState } from "react";
 import { Logo } from "./components/Logo";
@@ -8,19 +8,28 @@ import { Analysis } from "./pages/Analysis";
 import { Devices } from "./pages/Devices";
 import { Experiments } from "./pages/Experiments";
 import { Live } from "./pages/Live";
+import { Runner } from "./pages/Runner";
 
 const PAGES = [
   { name: "Live", icon: Activity },
   { name: "Devices", icon: Cpu },
   { name: "Experiments", icon: FlaskConical },
   { name: "Analysis", icon: BarChart3 },
+  { name: "Kit Study", icon: Bot },
   { name: "Models", icon: Brain },
   { name: "Settings", icon: Settings },
 ] as const;
 type Page = (typeof PAGES)[number]["name"];
 
+// `?page=Kit%20Study` opens a page directly (lab bookmarks, headless screenshots).
+function initialPage(): Page {
+  const wanted = new URLSearchParams(window.location.search).get("page");
+  const hit = PAGES.find((p) => p.name === wanted);
+  return hit ? hit.name : "Live";
+}
+
 export default function App() {
-  const [page, setPage] = useState<Page>("Live");
+  const [page, setPage] = useState<Page>(initialPage);
   const { pref, resolved, cycle } = useTheme();
   const ThemeIcon = pref === "system" ? Monitor : resolved === "dark" ? Moon : Sun;
 
@@ -70,6 +79,8 @@ export default function App() {
           <Experiments />
         ) : page === "Analysis" ? (
           <Analysis />
+        ) : page === "Kit Study" ? (
+          <Runner />
         ) : (
           <div className="glass flex h-40 items-center justify-center text-sm" style={{ color: "var(--text-muted)" }}>
             "{page}" arrives in a later milestone — already dressed in Clinical Frost.

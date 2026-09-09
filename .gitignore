@@ -88,3 +88,7 @@ hri_monitor/data/
 
 # Runtime device config (machine-specific; edit live via the Devices page)
 hri_monitor/config.yaml
+
+# Local secrets (OpenAI key etc.) — never commit
+hri_monitor/.env
+.env
