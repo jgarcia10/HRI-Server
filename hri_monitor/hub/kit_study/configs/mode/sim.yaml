@@ -1,0 +1,2 @@
+robot: {backend: sim, timing: {home: 3.0, pick: 2.5, place: 2.5, open_gripper: 0.5, noise_std: 0.2}, failure_rate: 0.0}
+supply: {lookahead: 1, side: C, pace: normal, announce: false}

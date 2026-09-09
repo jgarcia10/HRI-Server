@@ -10,6 +10,7 @@ class SessionStartIn(BaseModel):
     participant_code: str
     condition: str
     block: str = "orders_f1.yaml"
+    profile: dict | None = None
 
 
 class KitEventIn(BaseModel):
@@ -17,13 +18,20 @@ class KitEventIn(BaseModel):
     payload: dict = {}
 
 
-def build_kit_router(session: KitSession, bus) -> APIRouter:
+class ProfileIn(BaseModel):
+    lookahead: int | None = None
+    side: str | None = None
+    pace: str | None = None
+    announce: bool | None = None
+
+
+def build_kit_router(session: KitSession, bus, bridge=None) -> APIRouter:
     r = APIRouter()
 
     @r.post("/api/kit/session/start")
     def start(body: SessionStartIn):
         try:
-            return session.start(body.participant_code, body.condition, body.block)
+            return session.start(body.participant_code, body.condition, body.block, body.profile)
         except RuntimeError as e:
             return JSONResponse({"detail": str(e)}, status_code=409)
         except (ValueError, FileNotFoundError) as e:
@@ -45,6 +53,12 @@ def build_kit_router(session: KitSession, bus) -> APIRouter:
         if body.type == "speech":
             bus.publish("wizard.speech", {"text": str(body.payload.get("text", ""))})
             return {"ok": True}
+        if body.type == "request_part":
+            bus.publish("wizard.request_part", {})
+            return {"ok": True}
+        if body.type == "slot_cleared":
+            bus.publish("wizard.slot_cleared", {"slot": body.payload.get("slot")})
+            return {"ok": True}
         if session.engine is None:
             return JSONResponse({"detail": "no active session"}, status_code=409)
         if body.type == "part_placed":
@@ -54,5 +68,36 @@ def build_kit_router(session: KitSession, bus) -> APIRouter:
             session.engine.next_order()
             return {"ok": True}
         return JSONResponse({"detail": f"unknown event type {body.type}"}, status_code=400)
+
+    @r.get("/api/kit/robot/state")
+    def robot_state():
+        return bridge.state()
+
+    @r.post("/api/kit/robot/home")
+    def robot_home():
+        return {"ok": True, "job_id": bridge.submit("home")}
+
+    @r.post("/api/kit/robot/open_gripper")
+    def robot_open():
+        return {"ok": True, "job_id": bridge.submit("open_gripper")}
+
+    @r.post("/api/kit/robot/stop")
+    def robot_stop():
+        bridge.estop()
+        return {"ok": True}
+
+    @r.get("/api/kit/supply/state")
+    def supply_state():
+        return session.supply.status() if session.supply else {}
+
+    @r.post("/api/kit/supply/profile")
+    def supply_profile(body: ProfileIn):
+        if session.supply is None:
+            return JSONResponse({"detail": "no active session"}, status_code=409)
+        try:
+            session.supply.set_profile(**{k: v for k, v in body.model_dump().items() if v is not None})
+        except ValueError as e:
+            return JSONResponse({"detail": str(e)}, status_code=400)
+        return session.supply.status()
 
     return r

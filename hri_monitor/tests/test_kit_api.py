@@ -13,18 +13,24 @@ class FakeManager:
         return {}
 
 
+FAST_MODE = {"robot": {"backend": "sim", "timing": {"home": 0.002, "pick": 0.002, "place": 0.002,
+                                                    "open_gripper": 0.002, "noise_std": 0.0}},
+             "supply": {"lookahead": 1, "side": "C", "pace": "normal", "announce": False}}
+
+
 @pytest.fixture
 def client(tmp_path):
     bus = MessageBus()
     db = Database(tmp_path / "hri.db")
     ctrl = RecordingController(bus, db, tmp_path / "recordings")
     app = create_app(bus, FakeManager(), ui_dir=None, config_path=tmp_path / "c.yaml",
-                     experiments={"db": db, "controller": ctrl})
+                     experiments={"db": db, "controller": ctrl}, kit_mode=FAST_MODE)
     with TestClient(app) as c:
         yield c, bus
     kit = app.state.kit_session
     if kit.status() is not None:
         kit.stop()
+    app.state.robot_bridge.stop()
 
 
 def test_session_lifecycle(client):

@@ -22,7 +22,8 @@ WS_FLUSH_SECONDS = 0.1  # dashboard update rate (~10 Hz)
 MJPEG_FPS = 15
 
 
-def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments=None) -> FastAPI:
+def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments=None,
+              kit_mode: dict | None = None) -> FastAPI:
     app = FastAPI(title="HRI Monitor")
     frames = FrameStore(bus, {"thermal": "thermal.frame", "rgb": "rgb.frame"})
     app.state.frames = frames
@@ -35,9 +36,16 @@ def create_app(bus, manager, ui_dir=None, config_path="config.yaml", experiments
         app.include_router(build_analysis_router(experiments["db"]))
         from .kit_study.router import build_kit_router
         from .kit_study.session import KitSession
-        kit_session = KitSession(bus, experiments["db"], experiments["controller"])
-        app.include_router(build_kit_router(kit_session, bus))
+        from .kit_study.robot_bridge import RobotBridge
+        from .kit_study.runtime import build_backend, load_mode
+        mode_cfg = kit_mode or load_mode("sim")
+        bridge = RobotBridge(bus, build_backend(mode_cfg))
+        bridge.start()
+        kit_session = KitSession(bus, experiments["db"], experiments["controller"],
+                                 bridge=bridge, default_profile=mode_cfg.get("supply"))
+        app.include_router(build_kit_router(kit_session, bus, bridge))
         app.state.kit_session = kit_session
+        app.state.robot_bridge = bridge
 
     @app.get("/api/status")
     def status():

@@ -35,20 +35,25 @@ def _idle_task_state(block) -> dict:
 
 
 class KitSession:
-    def __init__(self, bus, db, controller, configs_dir=None, now=time.time, tick_interval=1.0):
+    def __init__(self, bus, db, controller, configs_dir=None, now=time.time, tick_interval=1.0,
+                 bridge=None, default_profile: dict | None = None):
         self.bus = bus
         self.db = db
         self.controller = controller
         self.configs_dir = Path(configs_dir) if configs_dir else _CONFIGS_DIR
         self.now = now
         self.tick_interval = tick_interval
+        self.bridge = bridge
+        self.default_profile = default_profile
+        self.supply = None
         self.engine: TaskEngine | None = None
         self._info = None
         self._ticker = None
         self._stop_evt = threading.Event()
 
     # ---------------------------------------------------------------- public
-    def start(self, participant_code: str, condition: str, block: str) -> dict:
+    def start(self, participant_code: str, condition: str, block: str,
+              profile: dict | None = None) -> dict:
         if self._info is not None:
             raise RuntimeError("a kit session is already active")
         if condition not in CONDITIONS:
@@ -63,6 +68,11 @@ class KitSession:
         try:
             self.bus.subscribe("*", self._on_bus)
             self.engine = TaskEngine(self.bus, spec, now=self.now, rng=random.Random())
+            if self.bridge is not None:
+                from .supply import SupplyController, SupplyProfile
+                prof = SupplyProfile(**{**(self.default_profile or {}), **(profile or {})})
+                self.supply = SupplyController(self.bus, self.bridge, spec, prof)
+                self.supply.start()
             self.engine.start_block()
             self._stop_evt.clear()
             self._ticker = threading.Thread(target=self._tick_loop, daemon=True)
@@ -70,6 +80,9 @@ class KitSession:
         except Exception:
             # clean up: unsubscribe, stop recording, reset engine
             self.bus.unsubscribe("*", self._on_bus)
+            if self.supply is not None:
+                self.supply.stop()
+                self.supply = None
             self.controller.stop()
             self.engine = None
             raise
@@ -85,6 +98,11 @@ class KitSession:
         if self._ticker is not None:
             self._ticker.join(timeout=2.0)
         self.engine.stop()
+        if self.supply is not None:
+            self.supply.stop()
+            self.supply = None
+        if self.bridge is not None:
+            self.bridge.clear_queue()   # a stopped session must never leave supply jobs moving the robot
         self.bus.unsubscribe("*", self._on_bus)
         block = self.engine.block
         status = self.controller.status()
@@ -101,7 +119,8 @@ class KitSession:
     def status(self):
         if self._info is None:
             return None
-        return {**self._info, "task": self.engine.state()}
+        return {**self._info, "task": self.engine.state(),
+                "supply": self.supply.status() if self.supply else None}
 
     # --------------------------------------------------------------- private
     def _tick_loop(self):
