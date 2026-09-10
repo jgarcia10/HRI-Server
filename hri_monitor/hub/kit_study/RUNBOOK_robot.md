@@ -82,64 +82,33 @@ robot` refuses this shortcut (see section C.4).
     app; it re-attempts the backend connection and returns the fresh robot state.
  2. PolyScope: check version (RTDE needs ≥3.7); safety config = reduced mode + planes around
     the shared mat; e-Series → Remote Control ON. Both E-stops within reach.
- 3. Gripper: **OnRobot RG2 v2 on the CB3**. On a CB3 (unlike an e-Series with the gripper wired
-    straight to the tool connector) the RG2 v2 can only be driven through the **OnRobot
-    Compute Box** (a small box between the robot and the gripper cable, Modbus TCP on port
-    502, unit id 65, default IP `192.168.1.1` — configurable in its own web UI). There are
-    three ways to actuate it, selected by `robot.gripper.kind` in the mode file:
-
-      - **`kind: tool_do`** (default, `configs/mode/robot.yaml`/`ursim.yaml`) — the app toggles
-        UR tool digital output 0 (`setToolDigitalOut`, legacy `SetIO(fun=1, pin=16)`), exactly
-        as before. This **only works when the OnRobot URCap is installed on the PolyScope and
-        connected to the Compute Box**, with the URCap's I/O mapping set to digital-I/O
-        control. Check on the teach pendant: Installation tab → URCaps → OnRobot → confirm it
-        shows "Connected" to the Compute Box; the same tab shows the box's IP if it needs
-        changing. **As of 2026-09-10 the URCap is not installed at all** — the pendant's
-        Installation tab shows "Missing URCap" — so `tool_do` does nothing right now
-        regardless of I/O mapping; DO0 toggling is inert until the URCap is back.
-      - **`kind: onrobot_modbus`** — the app talks Modbus TCP directly to the Compute Box from
-        the laptop (`hub/kit_study/robotd/gripper.py:OnRobotModbusGripper`; no pymodbus
-        dependency, no URCap required). Set it in the mode file:
+ 3. Gripper: **OnRobot RG2 v2, wired straight to the tool connector of the CB3** (no Compute
+    Box in the lab). **Working setup (verified on site 2026-09-10):** on the pendant,
+    *Installation → I/O*, set the **tool output to "controlled by user"** (not "by OnRobot"),
+    tool output voltage 24 V, then **save the installation** (File → Save) so it survives a
+    reboot. In that mode the gripper follows **tool digital output 0 directly: DO0 = 1 OPENS,
+    DO0 = 0 CLOSES** (the output the 2024 installation had named "close"). That is what the
+    app ships in `configs/mode/robot.yaml`:
 
             robot:
-              gripper: {kind: onrobot_modbus, ip: 192.168.1.1, port: 502, unit_id: 65,
-                        force_n: 20.0, open_width_mm: 100.0, close_width_mm: 25.0, settle_s: 1.0}
+              gripper: {kind: tool_do, close_high: false}
 
-        The register addresses in `OnRobotModbusGripper` are transcribed from the OnRobot
-        Compute Box Modbus manual and marked `# verify on site` — confirm them against the box
-        once reachable and correct the class constants if they differ.
-      - **`kind: onrobot_urcap`** — the app drives the OnRobot **unified URCap's `rg_grip(...)`**
-        the same way the URCap-generated PolyScope program does
-        (`hub/kit_study/robotd/gripper.py:OnRobotURCapGripper`). The RG2 v2 on this CB3 can
-        **only** be reached this way once the URCap is back: the URCap daemon runs inside the
-        controller and answers `rg_grip` calls only from URScript running on the controller
-        itself (XML-RPC to localhost) — nothing on the network can call it directly, unlike
-        `onrobot_modbus`. For every open/close the driver (1) builds a one-shot URScript
-        program from the archived URCap template
-        (`hub/kit_study/robotd/onrobot/rg_grip_urcap_5.15.0.script`, everything up to its
-        `while (True):` is the required URCap-generated preamble — gripper payload/TCP/tool
-        voltage setup — kept verbatim) with the requested width/force spliced into its
-        `rg_grip(...)` call; (2) sends it once over the UR **secondary interface** (port
-        30002), exactly as PolyScope's "play" does; (3) watches the **primary interface**
-        (port 30001) for the RobotMessage stream — our own `textmsg` markers plus the
-        controller's own `PROGRAM_*_STARTED`/`STOPPED` and any popup/error text — to tell
-        success from failure; (4) **always** calls `ctrl.reuploadScript()` afterwards, because
-        loading any other program onto the controller kills ur_rtde's control script — this is
-        wired automatically in `URBackend.connect()`, nothing to configure. Set it in the mode
-        file (no separate `ip:` needed — it talks to the robot itself, `robot.ip` above):
+    `close_high: false` is the polarity above; the generic default (`true`, DO0 = 1 closes)
+    is what `ursim.yaml` uses. Nothing else on the robot may drive the tool outputs while the
+    app runs — in particular do **not** enable "Tool Output controlled by OnRobot": the OnRobot
+    URCap daemon then takes over DO0/DO1 as its own communication lines and the app's commands
+    are ignored (and, as of 2026-09-10, that daemon never detected the gripper anyway —
+    "Tool connector – Empty" — even after a URCap reinstall and a full reboot).
 
-            robot:
-              gripper: {kind: onrobot_urcap, force_n: 20.0, open_width_mm: 100.0,
-                        close_width_mm: 20.0, timeout_s: 15.0}
+    Two alternative actuators exist in `hub/kit_study/robotd/gripper.py`, selectable with
+    `robot.gripper.kind`, for the day the OnRobot software path works: **`onrobot_urcap`**
+    runs the URCap-generated `rg_grip(width, force)` program on the controller (archived
+    template `robotd/onrobot/rg_grip_urcap_5.15.0.script`; gives width control and grip
+    detection; needs *Installation → OnRobot Setup* to show the RG2) and **`onrobot_modbus`**
+    for a Compute Box (Modbus TCP :502, unit 65). Both are tested with fakes only.
 
-        **Prerequisite, checked on the pendant**: Installation tab → URCaps → **OnRobot Setup**
-        must show the RG2 v2 device, not "Missing URCap". Reinstalling the URCap is the
-        blocking step right now (2026-09-10) — until then every `onrobot_urcap` call fails
-        fast with the captured pendant text (typically "Missing URCap" or "No RG gripper
-        connected") rather than a silent no-op like `tool_do`'s DO0 toggling.
-
-    **Bench check**: `.venv/bin/python tools/gripper_test.py open|close|cycle|state` exercises
-    tool DO0 (default); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the Compute Box
+    **Bench check**: `.venv/bin/python tools/gripper_test.py cycle --close-low` (open → close →
+    open through tool DO0 with the lab polarity; `open|close|state` likewise); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the Compute Box
     directly, or `--urcap [IP]` (defaults to the lab robot IP) to drive `rg_grip(...)` through
     the URCap exactly as the app does — `cycle --urcap` prints every RobotMessage it captured,
     which is the fastest way to confirm the URCap reinstall took (no more "Missing URCap") and
