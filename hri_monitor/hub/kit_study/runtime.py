@@ -40,6 +40,29 @@ def resolve_calibration_path(mode_cfg: dict) -> Path:
     return p if p.is_absolute() else HRI_MONITOR_ROOT / p
 
 
+def build_gripper(gripper_cfg: dict | None):
+    """robot.gripper config -> a Gripper instance, or None to let URBackend build its own
+    default ToolDOGripper (bound to the backend's own RTDE IO interface, so reconnects work).
+
+    `kind: tool_do` (default) — UR tool digital output 0; needs the OnRobot URCap connected to
+    the Compute Box and configured for digital I/O control.
+    `kind: onrobot_modbus` — direct Modbus TCP to the OnRobot Compute Box; works regardless of
+    URCap wiring. Requires `ip`; `port`/`unit_id`/`force_n`/`open_width_mm`/`close_width_mm`/
+    `settle_s` are optional overrides.
+    """
+    cfg = gripper_cfg or {}
+    kind = cfg.get("kind", "tool_do")
+    if kind == "tool_do":
+        return None
+    if kind == "onrobot_modbus":
+        from .robotd.gripper import OnRobotModbusGripper
+        kwargs = {k: cfg[k] for k in
+                  ("port", "unit_id", "force_n", "open_width_mm", "close_width_mm", "settle_s")
+                  if k in cfg}
+        return OnRobotModbusGripper(ip=cfg["ip"], **kwargs)
+    raise ValueError(f"unknown gripper kind {kind!r}")
+
+
 def build_backend(mode_cfg: dict) -> RobotBackend:
     r = mode_cfg["robot"]
     if r["backend"] == "sim":
@@ -58,5 +81,6 @@ def build_backend(mode_cfg: dict) -> RobotBackend:
             cal_path = Path(__file__).parent / "configs" / "calibration.example.yaml"
         cal = load_calibration(cal_path)
         return URBackend(r.get("ip") or cal.get("robot_ip"), cal,
-                         gripper_settle_s=float(r.get("gripper_settle_s", 1.0)))
+                         gripper_settle_s=float(r.get("gripper_settle_s", 1.0)),
+                         gripper=build_gripper(r.get("gripper")))
     raise ValueError(f"unknown robot backend {r['backend']!r}")

@@ -177,3 +177,36 @@ def test_relative_calibration_path_resolves_against_hri_monitor_root():
     resolved = resolve_calibration_path(cfg)
     assert resolved.is_absolute()
     assert resolved == HRI_MONITOR_ROOT / "hub" / "kit_study" / "configs" / "calibration.yaml"
+
+
+# --------------------------------------------------------------------- robot.gripper.kind
+def test_build_backend_default_gripper_is_tool_do():
+    """No robot.gripper key (or kind: tool_do) -> URBackend builds its own ToolDOGripper,
+    bound to its own RTDE IO interface so reconnects keep working."""
+    from hub.kit_study.robotd.gripper import ToolDOGripper
+    cfg = load_mode("ursim")
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, ToolDOGripper)
+    assert backend.gripper.do == 0
+
+
+def test_build_backend_onrobot_modbus_gripper():
+    from hub.kit_study.robotd.gripper import OnRobotModbusGripper
+    cfg = load_mode("ursim", overrides={"robot": {
+        "gripper": {"kind": "onrobot_modbus", "ip": "192.168.1.1", "port": 5020,
+                    "unit_id": 65, "force_n": 12.0, "open_width_mm": 80.0,
+                    "close_width_mm": 20.0, "settle_s": 0.5}}})
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, OnRobotModbusGripper)
+    assert backend.gripper.ip == "192.168.1.1"
+    assert backend.gripper.port == 5020
+    assert backend.gripper.force_n == 12.0
+    assert backend.gripper.open_width_mm == 80.0
+    assert backend.gripper.close_width_mm == 20.0
+    assert backend.gripper.settle_s == 0.5
+
+
+def test_build_backend_unknown_gripper_kind_raises():
+    cfg = load_mode("ursim", overrides={"robot": {"gripper": {"kind": "bogus"}}})
+    with pytest.raises(ValueError, match="unknown gripper kind"):
+        build_backend(cfg)

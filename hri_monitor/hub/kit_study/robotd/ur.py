@@ -30,6 +30,7 @@ import yaml
 from .base import (Aborted, EmergencyStop, RobotBackend, RobotError, RobotFault, ProtectiveStop,
                    RobotState, STAGING_SLOTS,
                    validate_depot_slot, validate_pace, validate_staging_slot)
+from .gripper import Gripper, ToolDOGripper
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
 DEFAULT_SPEEDS = {
@@ -80,6 +81,7 @@ class URBackend(RobotBackend):
 
     def __init__(self, ip: str, calibration: dict, speeds: dict | None = None,
                  gripper_settle_s: float = 1.0, rtde_factory=None,
+                 gripper: Gripper | None = None,
                  poll_s: float = POLL_S, move_timeout_s: float = MOVE_TIMEOUT_S,
                  stop_timeout_s: float = STOP_TIMEOUT_S, reach_grace_s: float = REACH_GRACE_S,
                  clock=time.monotonic):
@@ -88,6 +90,10 @@ class URBackend(RobotBackend):
         self.speeds = speeds or DEFAULT_SPEEDS
         self.settle = float(gripper_settle_s)
         self._factory = rtde_factory or _default_factory
+        # `settle_s=0.0`: URBackend does its own *interruptible* settle wait (see
+        # _approach_and/open_gripper) so the default gripper must not sleep twice.
+        self.gripper = gripper or ToolDOGripper(io_getter=lambda: self.io, do=GRIPPER_TOOL_DO,
+                                                 settle_s=0.0)
         self.poll_s = float(poll_s)
         self.move_timeout_s = float(move_timeout_s)
         self.stop_timeout_s = float(stop_timeout_s)
@@ -96,7 +102,6 @@ class URBackend(RobotBackend):
         self.ctrl = self.recv = self.io = None
         self._pace = "normal"
         self._busy = False
-        self._gripper_closed = False
         self._last = None
         self._abort = threading.Event()   # set by stop() (any thread), acted on by the worker
 
@@ -121,6 +126,7 @@ class URBackend(RobotBackend):
             self.ctrl, self.recv, self.io = self._factory(self.ip)
         except Exception as e:
             raise RobotError(f"cannot connect to UR at {self.ip}: {e}") from e
+        self.gripper.connect()
         self._abort.clear()
 
     def disconnect(self) -> None:
@@ -130,6 +136,7 @@ class URBackend(RobotBackend):
         stops polling and issues its own stopJ/stopL, then close control → receive → io.
         """
         self._abort.set()
+        self.gripper.disconnect()
         self._close_interfaces()
 
     def _close_interfaces(self) -> None:
@@ -306,9 +313,10 @@ class URBackend(RobotBackend):
         self._moveJ(self.cal["transit"]["q"])
         self._moveJ(self._ik(above, node, slot))
         self._moveL(pose)
-        if not self.io.setToolDigitalOut(GRIPPER_TOOL_DO, close):
-            raise RobotError("gripper command refused")
-        self._gripper_closed = close
+        if close:
+            self.gripper.close()
+        else:
+            self.gripper.open()
         if self.settle and self._abort.wait(self.settle):
             raise Aborted("motion stopped by stop() during gripper settle")
         self._moveL(above)
@@ -342,9 +350,7 @@ class URBackend(RobotBackend):
 
     def open_gripper(self) -> None:
         def _open():
-            if not self.io.setToolDigitalOut(GRIPPER_TOOL_DO, False):
-                raise RobotError("gripper command refused")
-            self._gripper_closed = False
+            self.gripper.open()
             if self.settle and self._abort.wait(self.settle):
                 raise Aborted("motion stopped by stop() during gripper settle")
         self._run("open_gripper", _open)
@@ -377,5 +383,5 @@ class URBackend(RobotBackend):
             except Exception:
                 connected, safety = False, "disconnected"
         return RobotState(connected=connected, backend=self.name, busy=self._busy,
-                          gripper_closed=self._gripper_closed, pace=self._pace, last_skill=self._last,
-                          safety=safety)
+                          gripper_closed=bool(self.gripper.is_closed()), pace=self._pace,
+                          last_skill=self._last, safety=safety)

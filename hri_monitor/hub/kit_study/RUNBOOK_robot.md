@@ -82,9 +82,44 @@ robot` refuses this shortcut (see section C.4).
     app; it re-attempts the backend connection and returns the fresh robot state.
  2. PolyScope: check version (RTDE needs ≥3.7); safety config = reduced mode + planes around
     the shared mat; e-Series → Remote Control ON. Both E-stops within reach.
- 3. Gripper (OnRobot on tool digital output 0): with the robot idle, `open_gripper` from the
-    wizard, confirm it opens; confirm it closes on a brick without crushing it (adjust the
-    OnRobot force/width preset in its own UI if needed).
+ 3. Gripper: **OnRobot RG2 v2 on the CB3**. On a CB3 (unlike an e-Series with the gripper wired
+    straight to the tool connector) the RG2 v2 can only be driven through the **OnRobot
+    Compute Box** (a small box between the robot and the gripper cable, Modbus TCP on port
+    502, unit id 65, default IP `192.168.1.1` — configurable in its own web UI). There are two
+    ways to actuate it, selected by `robot.gripper.kind` in the mode file:
+
+      - **`kind: tool_do`** (default, `configs/mode/robot.yaml`/`ursim.yaml`) — the app toggles
+        UR tool digital output 0 (`setToolDigitalOut`, legacy `SetIO(fun=1, pin=16)`), exactly
+        as before. This **only works when the OnRobot URCap is installed on the PolyScope and
+        connected to the Compute Box**, with the URCap's I/O mapping set to digital-I/O
+        control. Check on the teach pendant: Installation tab → URCaps → OnRobot → confirm it
+        shows "Connected" to the Compute Box; the same tab shows the box's IP if it needs
+        changing. As of 2026-09, this link is **not** set up in the lab, so `open_gripper`
+        from the wizard will not move anything until it is.
+      - **`kind: onrobot_modbus`** — the app talks Modbus TCP directly to the Compute Box from
+        the laptop (`hub/kit_study/robotd/gripper.py:OnRobotModbusGripper`; no pymodbus
+        dependency, no URCap required). Set it in the mode file:
+
+            robot:
+              gripper: {kind: onrobot_modbus, ip: 192.168.1.1, port: 502, unit_id: 65,
+                        force_n: 20.0, open_width_mm: 100.0, close_width_mm: 25.0, settle_s: 1.0}
+
+        The register addresses in `OnRobotModbusGripper` are transcribed from the OnRobot
+        Compute Box Modbus manual and marked `# verify on site` — confirm them against the box
+        once reachable and correct the class constants if they differ.
+
+    **Bench check, either way**: `.venv/bin/python tools/gripper_test.py open|close|cycle|state`
+    exercises tool DO0 (default); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the
+    Compute Box directly and sanity-check it independently of the app and the URCap link —
+    `state` prints the raw status bits and actual width register. With the robot idle, confirm
+    it opens, then confirm it closes on a brick without crushing it (adjust the OnRobot
+    force/width preset — in its own UI for `tool_do`, or via `force_n`/`close_width_mm` in the
+    mode file for `onrobot_modbus`).
+
+    **Network note**: the CB3 controller has a single Ethernet port, already used for this PC's
+    wired link (step 1). The Compute Box needs its own path to both the controller and (for
+    `onrobot_modbus`) this laptop — put a small switch between the PC, the CB3 controller, and
+    the Compute Box rather than daisy-chaining through a port that doesn't exist.
  4. Teach poses (first time / after any table change). `--mode robot` is **fail-closed**: it
     refuses to start unless `hub/kit_study/configs/calibration.yaml` exists
     (`hub/kit_study/runtime.py:build_backend` raises `RobotError` otherwise) — it will never

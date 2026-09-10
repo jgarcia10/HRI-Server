@@ -1,2 +1,3 @@
-robot: {backend: ur, ip: 127.0.0.1, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: true}
+robot: {backend: ur, ip: 127.0.0.1, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: true,
+        gripper: {kind: tool_do}}
 supply: {lookahead: 1, side: C, pace: normal, announce: false}
