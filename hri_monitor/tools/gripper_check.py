@@ -5,6 +5,10 @@ user"; DO0 = 1 opens, DO0 = 0 closes). Run from hri_monitor/:
     .venv/bin/python tools/gripper_check.py [robot_ip]
 
 Prints a verdict per step. It only writes tool DO0 (what the app does) and leaves it at 1 (open).
+
+IMPORTANT: after any loss of tool power the RG2 ignores DO0 until the OnRobot URCap has
+initialised it once: pendant Installation → I/O → tool output "controlled by OnRobot" (gripper
+closes) → back to "controlled by user" → File → Save. Never power-cycle the tool from software.
 """
 import socket
 import struct
@@ -59,6 +63,7 @@ def main() -> int:
     io = rtde_io.RTDEIOInterface(IP)
     stream = ToolStream(IP); stream.start(); time.sleep(1.5)
     do0 = lambda: int(recv.getActualDigitalOutputBits()) >> 16 & 1
+    dobits = lambda: int(recv.getActualDigitalOutputBits()) >> 16 & 0b11
     di = lambda: int(recv.getActualDigitalInputBits()) >> 16 & 0b11
     verdicts = []
 
@@ -74,9 +79,9 @@ def main() -> int:
     # 1. is anything else driving DO0?  (the OnRobot daemon toggles it as its comm line)
     seen = set(); t0 = time.time()
     while time.time() - t0 < 3.0:
-        seen.add(do0()); time.sleep(0.05)
+        seen.add(dobits()); time.sleep(0.05)
     quiet = len(seen) == 1
-    print(f"{OK if quiet else BAD} DO0 left alone for 3 s: {'stable at %d' % seen.pop() if quiet else 'CHANGING by itself'}"
+    print(f"{OK if quiet else BAD} tool DO1:DO0 left alone for 3 s: {'stable at %02b' % seen.pop() if quiet else 'CHANGING by themselves'}"
           + ("" if quiet else "  → the OnRobot URCap daemon owns the tool output: pendant Installation → I/O → tool output 'controlled by user', then File → Save"))
     verdicts.append(quiet)
 
