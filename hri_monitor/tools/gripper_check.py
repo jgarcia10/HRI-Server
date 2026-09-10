@@ -4,6 +4,7 @@ user"; DO0 = 1 opens, DO0 = 0 closes). Run from hri_monitor/:
 
     .venv/bin/python tools/gripper_check.py [robot_ip]          # full check (writes DO0 open/close)
     .venv/bin/python tools/gripper_check.py --watch             # live state only, writes nothing
+    .venv/bin/python tools/gripper_check.py --matrix            # all 4 output combinations, decisive
 
 Prints a verdict per step. It only writes tool DO0 (what the app does) and leaves it at 1 (open).
 
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 IP = next((a for a in ARGS if a.count(".") == 3), "147.250.35.40")   # ignore stray words like "cycle"
 WATCH = "--watch" in sys.argv
+MATRIX = "--matrix" in sys.argv
 OK, BAD, INFO = "\033[32m✔\033[0m", "\033[31m✘\033[0m", "  ·"
 
 
@@ -93,9 +95,40 @@ def watch() -> int:
     return 0
 
 
+def matrix() -> int:
+    """All four tool-output combinations (2024 names: DO0 = close, DO1 = soft) with 5 s dwell.
+
+    The decisive number is the tool current: an RG2 that is listening draws ~130-145 mA while a
+    control line is active, versus ~85 mA idle. Identical current in all four rows means the
+    control line is not reaching the gripper at all (contacts / cable), whatever the pendant says.
+    """
+    import rtde_io, rtde_receive
+    recv = rtde_receive.RTDEReceiveInterface(IP); io = rtde_io.RTDEIOInterface(IP)
+    st = ToolStream(IP); st.start(); time.sleep(1.5)
+    print("DO1(soft) DO0(close) | tool current  |  AI0   AI1  | tool DI seen     'awake' = ~0.13 A")
+    rows = []
+    for d1 in (False, True):
+        for d0 in (False, True):
+            io.setToolDigitalOut(1, d1); io.setToolDigitalOut(0, d0)
+            st.samples.clear(); dis = set(); t0 = time.time()
+            while time.time() - t0 < 5.0:
+                dis.add(int(recv.getActualDigitalInputBits()) >> 16 & 0b11); time.sleep(0.05)
+            s = list(st.samples); cur = [x["cur"] for x in s]
+            rows.append(max(cur))
+            print(f"   {int(d1)}         {int(d0)}      | {min(cur):.3f}-{max(cur):.3f} A | {s[-1]['ai0']:5.2f} {s[-1]['ai1']:5.2f} | {sorted(dis)}")
+    io.setToolDigitalOut(1, False); io.setToolDigitalOut(0, True)     # leave open, soft off
+    st.stop.set(); recv.disconnect(); io.disconnect()
+    spread = max(rows) - min(rows)
+    print(f"\n{OK if spread > 0.03 else BAD} current spread across the four combinations: {spread*1000:.0f} mA"
+          + ("" if spread > 0.03 else "  → no control line reaches the gripper: power off and re-seat the Quick Changer (RUNBOOK C.3)"))
+    return 0 if spread > 0.03 else 1
+
+
 def main() -> int:
     if WATCH:
         return watch()
+    if MATRIX:
+        return matrix()
     import rtde_io, rtde_receive
     recv = rtde_receive.RTDEReceiveInterface(IP)
     io = rtde_io.RTDEIOInterface(IP)
