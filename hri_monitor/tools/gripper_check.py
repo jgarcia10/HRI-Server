@@ -119,7 +119,7 @@ def main() -> int:
     while time.time() - t0 < 3.0:
         seen.add(dobits()); time.sleep(0.05)
     quiet = len(seen) == 1
-    print(f"{OK if quiet else BAD} tool DO1:DO0 left alone for 3 s: {'stable at %02b' % seen.pop() if quiet else 'CHANGING by themselves'}"
+    print(f"{OK if quiet else BAD} tool DO1:DO0 left alone for 3 s: {('stable at ' + format(seen.pop(), '02b')) if quiet else 'CHANGING by themselves'}"
           + ("" if quiet else "  → the OnRobot URCap daemon owns the tool output: pendant Installation → I/O → tool output 'controlled by user', then File → Save"))
     verdicts.append(quiet)
 
