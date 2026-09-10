@@ -40,7 +40,7 @@ def resolve_calibration_path(mode_cfg: dict) -> Path:
     return p if p.is_absolute() else HRI_MONITOR_ROOT / p
 
 
-def build_gripper(gripper_cfg: dict | None):
+def build_gripper(gripper_cfg: dict | None, robot_ip: str | None = None):
     """robot.gripper config -> a Gripper instance, or None to let URBackend build its own
     default ToolDOGripper (bound to the backend's own RTDE IO interface, so reconnects work).
 
@@ -49,6 +49,10 @@ def build_gripper(gripper_cfg: dict | None):
     `kind: onrobot_modbus` — direct Modbus TCP to the OnRobot Compute Box; works regardless of
     URCap wiring. Requires `ip`; `port`/`unit_id`/`force_n`/`open_width_mm`/`close_width_mm`/
     `settle_s` are optional overrides.
+    `kind: onrobot_urcap` — drives the OnRobot unified URCap's `rg_grip(...)` through a one-shot
+    URScript program sent to the controller itself, so it talks to `robot_ip` (the UR, not a
+    separate box) unless `ip` overrides it. `force_n`/`open_width_mm`/`close_width_mm`/
+    `timeout_s`/`script_path` are optional overrides.
     """
     cfg = gripper_cfg or {}
     kind = cfg.get("kind", "tool_do")
@@ -60,6 +64,12 @@ def build_gripper(gripper_cfg: dict | None):
                   ("port", "unit_id", "force_n", "open_width_mm", "close_width_mm", "settle_s")
                   if k in cfg}
         return OnRobotModbusGripper(ip=cfg["ip"], **kwargs)
+    if kind == "onrobot_urcap":
+        from .robotd.gripper import OnRobotURCapGripper
+        kwargs = {k: cfg[k] for k in
+                  ("force_n", "open_width_mm", "close_width_mm", "timeout_s", "script_path")
+                  if k in cfg}
+        return OnRobotURCapGripper(ip=cfg.get("ip", robot_ip), **kwargs)
     raise ValueError(f"unknown gripper kind {kind!r}")
 
 
@@ -80,7 +90,8 @@ def build_backend(mode_cfg: dict) -> RobotBackend:
                         "never use on the real robot")
             cal_path = Path(__file__).parent / "configs" / "calibration.example.yaml"
         cal = load_calibration(cal_path)
-        return URBackend(r.get("ip") or cal.get("robot_ip"), cal,
+        robot_ip = r.get("ip") or cal.get("robot_ip")
+        return URBackend(robot_ip, cal,
                          gripper_settle_s=float(r.get("gripper_settle_s", 1.0)),
-                         gripper=build_gripper(r.get("gripper")))
+                         gripper=build_gripper(r.get("gripper"), robot_ip=robot_ip))
     raise ValueError(f"unknown robot backend {r['backend']!r}")

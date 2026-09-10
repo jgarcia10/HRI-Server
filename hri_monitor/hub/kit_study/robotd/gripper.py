@@ -1,6 +1,6 @@
 """Gripper actuators for the UR backend.
 
-The OnRobot RG2 v2 on the study's CB3 controller can be driven two ways:
+The OnRobot RG2 v2 on the study's CB3 controller can be driven three ways:
 
 * :class:`ToolDOGripper` — toggling UR tool digital output 0 (legacy ``SetIO(fun=1, pin=16)``).
   This is what URBackend has always done, but on a CB3 it only works when the OnRobot URCap is
@@ -8,18 +8,55 @@ The OnRobot RG2 v2 on the study's CB3 controller can be driven two ways:
 * :class:`OnRobotModbusGripper` — talking Modbus TCP directly to the OnRobot Compute Box
   (port 502, unit id 65). This works regardless of URCap wiring and is the fallback while the
   URCap↔box link is not set up in the lab.
+* :class:`OnRobotURCapGripper` — driving the OnRobot unified URCap's `rg_grip(...)` through a
+  one-shot URScript program sent to the controller. This is the only way to actuate the gripper
+  once the URCap is (re)installed: the URCap daemon only answers XML-RPC calls from URScript
+  running *on the controller*, so nothing on the network can reach it directly.
 
-Both implement the small :class:`Gripper` protocol so `URBackend` never has to know which one
-it holds.
+All three implement the small :class:`Gripper` protocol so `URBackend` never has to know which
+one it holds.
 """
 from __future__ import annotations
 
 import socket
 import struct
+import threading
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from .base import RobotError
+
+# -- UR primary/secondary interface framing, used by OnRobotURCapGripper -------------------
+UR_PRIMARY_PORT = 30001      # streams RobotState + RobotMessage packets once connected
+UR_SECONDARY_PORT = 30002    # accepts one URScript program per connection ("play" equivalent)
+ROBOT_MESSAGE_TYPE = 20      # UR real-time client interface: message type 20 == ROBOT_MESSAGE
+
+_HEADER_FMT = ">IB"                             # packet length (incl. header), message type
+_HEADER_LEN = struct.calcsize(_HEADER_FMT)      # 5
+_BODY_PREFIX_FMT = ">QBB"                       # timestamp, source, robotMessageType
+_BODY_PREFIX_LEN = struct.calcsize(_BODY_PREFIX_FMT)   # 10
+
+
+def encode_robot_message(text: str, subtype: int = 0) -> bytes:
+    """Build one RobotMessage (type 20) primary-interface packet carrying `text`.
+
+    Real RobotMessage payloads vary by `robotMessageType` (POPUP, TEXT_MSG, PROGRAM label,
+    …); `OnRobotURCapGripper` only cares about the printable ASCII text past the fixed
+    timestamp/source/robotMessageType prefix, so this stub zeroes the timestamp/source and
+    puts `subtype` in the robotMessageType byte. Exercised by `tests/test_gripper.py` to
+    script the fake controller's primary-interface stream.
+    """
+    payload = text.encode("ascii", errors="replace")
+    body = struct.pack(_BODY_PREFIX_FMT, 0, 0, subtype) + payload
+    return struct.pack(_HEADER_FMT, _HEADER_LEN + len(body), ROBOT_MESSAGE_TYPE) + body
+
+
+def _extract_robot_message_text(packet: bytes) -> str | None:
+    """Printable ASCII text from one already-framed RobotMessage packet, or None."""
+    payload = packet[_HEADER_LEN + _BODY_PREFIX_LEN:]
+    text = "".join(chr(b) for b in payload if 32 <= b < 127)
+    return text or None
 
 
 class Gripper(ABC):
@@ -274,3 +311,203 @@ class OnRobotModbusGripper(Gripper):
             "safety_error": bool(status & self.STATUS_SAFETY_ERROR),
             "actual_width_mm": width10 / 10.0,
         }
+
+
+class OnRobotURCapGripper(Gripper):
+    """Drives the OnRobot RG2 v2 through the OnRobot unified URCap on a CB3 controller.
+
+    The URCap daemon lives inside the controller and answers only to URScript's `rg_grip(...)`
+    (XML-RPC to localhost) — nothing on the network can reach it directly. So each open/close:
+
+    1. builds a one-shot program from the URCap-generated template (`script_path`), substituting
+       the requested width/force into its `rg_grip(...)` call;
+    2. watches the *primary* interface (port 30001) for the RobotMessage stream in a background
+       thread: our own `textmsg` markers, the controller's own PROGRAM_*_STARTED/STOPPED
+       messages, and any popup/error text (e.g. "Missing URCap", "No RG gripper connected");
+    3. sends the program once over the *secondary* interface (port 30002) — a single `sendall`
+       then close, exactly as PolyScope's "play" button does;
+    4. always restores the ur_rtde control script afterwards via `reupload()`, because loading
+       any other program onto the controller kills it — on success or on failure alike.
+
+    `sock_factory(addr, timeout=...)` and `sleep(seconds)` are injectable so tests can script the
+    primary-interface stream and the secondary-interface send without touching a real socket.
+    """
+
+    name = "onrobot_urcap"
+
+    DEFAULT_SCRIPT_PATH = Path(__file__).parent / "onrobot" / "rg_grip_urcap_5.15.0.script"
+    WHILE_MARKER = "  while (True):\n"       # everything before this line is the URCap preamble
+    DONE_MARKER = "KIT rg_grip done"
+    FAILURE_MARKERS = ("halted", "No RG gripper", "Missing", "error")
+    LISTEN_POLL_S = 0.2
+    REUPLOAD_SETTLE_S = 0.2                   # let the controller drop the temp program first
+
+    PRIMARY_PORT = UR_PRIMARY_PORT
+    SECONDARY_PORT = UR_SECONDARY_PORT
+
+    def __init__(self, ip: str, script_path=None, force_n: float = 20.0,
+                 open_width_mm: float = 100.0, close_width_mm: float = 20.0,
+                 timeout_s: float = 15.0, reupload=None,
+                 sock_factory=socket.create_connection, sleep=time.sleep):
+        self.ip = ip
+        self.script_path = Path(script_path) if script_path else self.DEFAULT_SCRIPT_PATH
+        self.force_n = float(force_n)
+        self.open_width_mm = float(open_width_mm)
+        self.close_width_mm = float(close_width_mm)
+        self.timeout_s = float(timeout_s)
+        self.reupload = reupload
+        self._sock_factory = sock_factory
+        self._sleep = sleep
+        self._preamble = self._load_preamble(self.script_path)
+        self._closed: bool | None = None
+        self.last_messages: list[str] = []   # captured RobotMessage text from the last open/close
+
+    @classmethod
+    def _load_preamble(cls, path) -> str:
+        """Everything up to (not including) the top-level ``  while (True):`` line.
+
+        Searched with a leading ``\\n`` so it only matches that line at *exactly* 2-space
+        indent — the template also nests a differently-indented ``while (True):`` inside its
+        step-counter thread, and a bare substring search matches inside that deeper indent too
+        (2 of its 4 leading spaces line up with the marker).
+        """
+        text = Path(path).read_text()
+        anchored = "\n" + cls.WHILE_MARKER
+        idx = text.find(anchored)
+        if idx == -1:
+            raise RobotError(
+                f"URCap template {path} is missing the {cls.WHILE_MARKER.strip()!r} marker")
+        return text[:idx + 1]
+
+    def _render_program(self, width_mm: float, force_n: float) -> str:
+        return (
+            self._preamble
+            + '  textmsg("KIT rg_grip start")\n'
+            + f'  on_return = rg_grip({width_mm:.1f}, {force_n:.1f}, tool_index = 0, '
+              'blocking = True, depth_comp = False, popupmsg = True)\n'
+            + '  textmsg("KIT rg_grip done")\n'
+            + '  sleep(0.3)\n'
+            + 'end\n'
+        )
+
+    # -------------------------------------------------------------- lifecycle
+    def connect(self) -> None:
+        pass   # nothing to open ahead of time — each open()/close() connects for itself
+
+    def disconnect(self) -> None:
+        pass
+
+    # ---------------------------------------------------------------- actuator
+    def open(self) -> None:
+        self._actuate(self.open_width_mm, closed=False)
+
+    def close(self) -> None:
+        self._actuate(self.close_width_mm, closed=True)
+
+    def is_closed(self) -> bool | None:
+        return self._closed
+
+    def grip_detected(self) -> bool | None:
+        return None   # could be parsed from the URCap's rg_Grip_detected chatter later
+
+    # ------------------------------------------------------------------- wire
+    def _actuate(self, width_mm: float, closed: bool) -> None:
+        program = self._render_program(width_mm, self.force_n)
+        lock = threading.Lock()
+        outcome: dict = {"result": None, "text": None}
+        done_event = threading.Event()
+        messages: list[str] = []
+
+        def record(text: str) -> None:
+            messages.append(text)
+            with lock:
+                if outcome["result"] is not None:
+                    return
+                if self.DONE_MARKER in text:
+                    outcome["result"] = "success"
+                elif any(marker in text for marker in self.FAILURE_MARKERS):
+                    outcome["result"] = "failure"
+                    outcome["text"] = text
+                elif "STOPPED" in text:
+                    outcome["result"] = "failure"
+                    outcome["text"] = text
+                else:
+                    return
+            done_event.set()
+
+        stop_listen = threading.Event()
+        listener = threading.Thread(target=self._listen_primary, args=(record, stop_listen),
+                                     daemon=True)
+        listener.start()
+        try:
+            self._send_program(program)
+            if not done_event.wait(self.timeout_s):
+                raise RobotError("gripper program timeout")
+        finally:
+            stop_listen.set()
+            listener.join(timeout=self.timeout_s)
+            if self.reupload is not None:
+                self._sleep(self.REUPLOAD_SETTLE_S)
+                self.reupload()
+        self.last_messages = messages
+        if outcome["result"] == "failure":
+            raise RobotError(f"gripper program failed: {outcome['text']}")
+        self._closed = closed
+
+    def _send_program(self, program: str) -> None:
+        try:
+            sock = self._sock_factory((self.ip, self.SECONDARY_PORT), timeout=self.timeout_s)
+        except OSError as e:
+            raise RobotError(
+                f"cannot connect to UR secondary interface at {self.ip}:{self.SECONDARY_PORT}: "
+                f"{e}") from e
+        try:
+            sock.sendall(program.encode("utf-8"))
+        except OSError as e:
+            raise RobotError(f"failed to send gripper program: {e}") from e
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def _listen_primary(self, on_message, stop_event: threading.Event) -> None:
+        try:
+            sock = self._sock_factory((self.ip, self.PRIMARY_PORT), timeout=self.timeout_s)
+        except OSError:
+            return   # the secondary-interface send (or the timeout) still governs the outcome
+        buf = b""
+        try:
+            while not stop_event.is_set():
+                try:
+                    sock.settimeout(self.LISTEN_POLL_S)
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+                buf = self._consume_packets(buf, on_message)
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _consume_packets(buf: bytes, on_message) -> bytes:
+        while len(buf) >= _HEADER_LEN:
+            length, mtype = struct.unpack_from(_HEADER_FMT, buf, 0)
+            if length < _HEADER_LEN:
+                buf = buf[1:]          # malformed framing: resync one byte at a time
+                continue
+            if len(buf) < length:
+                break                  # wait for the rest of this packet
+            packet, buf = buf[:length], buf[length:]
+            if mtype == ROBOT_MESSAGE_TYPE:
+                text = _extract_robot_message_text(packet)
+                if text:
+                    on_message(text)
+        return buf

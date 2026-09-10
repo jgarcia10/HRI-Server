@@ -146,6 +146,8 @@ class FakeControl:
     def teachMode(self): self.calls.append(("teach",)); return True
     def endTeachMode(self): self.calls.append(("endteach",)); return True
 
+    def reuploadScript(self): self.calls.append(("reuploadScript",)); return True
+
 
 class FakeReceive:
     def __init__(self, robot=None):

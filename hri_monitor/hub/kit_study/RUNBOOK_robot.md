@@ -85,8 +85,8 @@ robot` refuses this shortcut (see section C.4).
  3. Gripper: **OnRobot RG2 v2 on the CB3**. On a CB3 (unlike an e-Series with the gripper wired
     straight to the tool connector) the RG2 v2 can only be driven through the **OnRobot
     Compute Box** (a small box between the robot and the gripper cable, Modbus TCP on port
-    502, unit id 65, default IP `192.168.1.1` — configurable in its own web UI). There are two
-    ways to actuate it, selected by `robot.gripper.kind` in the mode file:
+    502, unit id 65, default IP `192.168.1.1` — configurable in its own web UI). There are
+    three ways to actuate it, selected by `robot.gripper.kind` in the mode file:
 
       - **`kind: tool_do`** (default, `configs/mode/robot.yaml`/`ursim.yaml`) — the app toggles
         UR tool digital output 0 (`setToolDigitalOut`, legacy `SetIO(fun=1, pin=16)`), exactly
@@ -94,8 +94,9 @@ robot` refuses this shortcut (see section C.4).
         connected to the Compute Box**, with the URCap's I/O mapping set to digital-I/O
         control. Check on the teach pendant: Installation tab → URCaps → OnRobot → confirm it
         shows "Connected" to the Compute Box; the same tab shows the box's IP if it needs
-        changing. As of 2026-09, this link is **not** set up in the lab, so `open_gripper`
-        from the wizard will not move anything until it is.
+        changing. **As of 2026-09-10 the URCap is not installed at all** — the pendant's
+        Installation tab shows "Missing URCap" — so `tool_do` does nothing right now
+        regardless of I/O mapping; DO0 toggling is inert until the URCap is back.
       - **`kind: onrobot_modbus`** — the app talks Modbus TCP directly to the Compute Box from
         the laptop (`hub/kit_study/robotd/gripper.py:OnRobotModbusGripper`; no pymodbus
         dependency, no URCap required). Set it in the mode file:
@@ -107,19 +108,51 @@ robot` refuses this shortcut (see section C.4).
         The register addresses in `OnRobotModbusGripper` are transcribed from the OnRobot
         Compute Box Modbus manual and marked `# verify on site` — confirm them against the box
         once reachable and correct the class constants if they differ.
+      - **`kind: onrobot_urcap`** — the app drives the OnRobot **unified URCap's `rg_grip(...)`**
+        the same way the URCap-generated PolyScope program does
+        (`hub/kit_study/robotd/gripper.py:OnRobotURCapGripper`). The RG2 v2 on this CB3 can
+        **only** be reached this way once the URCap is back: the URCap daemon runs inside the
+        controller and answers `rg_grip` calls only from URScript running on the controller
+        itself (XML-RPC to localhost) — nothing on the network can call it directly, unlike
+        `onrobot_modbus`. For every open/close the driver (1) builds a one-shot URScript
+        program from the archived URCap template
+        (`hub/kit_study/robotd/onrobot/rg_grip_urcap_5.15.0.script`, everything up to its
+        `while (True):` is the required URCap-generated preamble — gripper payload/TCP/tool
+        voltage setup — kept verbatim) with the requested width/force spliced into its
+        `rg_grip(...)` call; (2) sends it once over the UR **secondary interface** (port
+        30002), exactly as PolyScope's "play" does; (3) watches the **primary interface**
+        (port 30001) for the RobotMessage stream — our own `textmsg` markers plus the
+        controller's own `PROGRAM_*_STARTED`/`STOPPED` and any popup/error text — to tell
+        success from failure; (4) **always** calls `ctrl.reuploadScript()` afterwards, because
+        loading any other program onto the controller kills ur_rtde's control script — this is
+        wired automatically in `URBackend.connect()`, nothing to configure. Set it in the mode
+        file (no separate `ip:` needed — it talks to the robot itself, `robot.ip` above):
 
-    **Bench check, either way**: `.venv/bin/python tools/gripper_test.py open|close|cycle|state`
-    exercises tool DO0 (default); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the
-    Compute Box directly and sanity-check it independently of the app and the URCap link —
-    `state` prints the raw status bits and actual width register. With the robot idle, confirm
-    it opens, then confirm it closes on a brick without crushing it (adjust the OnRobot
-    force/width preset — in its own UI for `tool_do`, or via `force_n`/`close_width_mm` in the
-    mode file for `onrobot_modbus`).
+            robot:
+              gripper: {kind: onrobot_urcap, force_n: 20.0, open_width_mm: 100.0,
+                        close_width_mm: 20.0, timeout_s: 15.0}
+
+        **Prerequisite, checked on the pendant**: Installation tab → URCaps → **OnRobot Setup**
+        must show the RG2 v2 device, not "Missing URCap". Reinstalling the URCap is the
+        blocking step right now (2026-09-10) — until then every `onrobot_urcap` call fails
+        fast with the captured pendant text (typically "Missing URCap" or "No RG gripper
+        connected") rather than a silent no-op like `tool_do`'s DO0 toggling.
+
+    **Bench check**: `.venv/bin/python tools/gripper_test.py open|close|cycle|state` exercises
+    tool DO0 (default); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the Compute Box
+    directly, or `--urcap [IP]` (defaults to the lab robot IP) to drive `rg_grip(...)` through
+    the URCap exactly as the app does — `cycle --urcap` prints every RobotMessage it captured,
+    which is the fastest way to confirm the URCap reinstall took (no more "Missing URCap") and
+    that `rg_grip` completes cleanly. With the robot idle, confirm it opens, then confirm it
+    closes on a brick without crushing it (adjust the OnRobot force/width preset — in its own UI
+    for `tool_do`, or via `force_n`/`close_width_mm` in the mode file for `onrobot_modbus` /
+    `onrobot_urcap`).
 
     **Network note**: the CB3 controller has a single Ethernet port, already used for this PC's
     wired link (step 1). The Compute Box needs its own path to both the controller and (for
     `onrobot_modbus`) this laptop — put a small switch between the PC, the CB3 controller, and
-    the Compute Box rather than daisy-chaining through a port that doesn't exist.
+    the Compute Box rather than daisy-chaining through a port that doesn't exist. `onrobot_urcap`
+    doesn't need this — it only talks to the controller, over the same link as RTDE.
  4. Teach poses (first time / after any table change). `--mode robot` is **fail-closed**: it
     refuses to start unless `hub/kit_study/configs/calibration.yaml` exists
     (`hub/kit_study/runtime.py:build_backend` raises `RobotError` otherwise) — it will never

@@ -30,7 +30,7 @@ import yaml
 from .base import (Aborted, EmergencyStop, RobotBackend, RobotError, RobotFault, ProtectiveStop,
                    RobotState, STAGING_SLOTS,
                    validate_depot_slot, validate_pace, validate_staging_slot)
-from .gripper import Gripper, ToolDOGripper
+from .gripper import Gripper, OnRobotURCapGripper, ToolDOGripper
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
 DEFAULT_SPEEDS = {
@@ -127,6 +127,13 @@ class URBackend(RobotBackend):
         except Exception as e:
             raise RobotError(f"cannot connect to UR at {self.ip}: {e}") from e
         self.gripper.connect()
+        if isinstance(self.gripper, OnRobotURCapGripper) and self.gripper.reupload is None:
+            # Sending the URCap program over the secondary interface kills the ur_rtde control
+            # script; reupload() restores it. `self.ctrl` is read lazily (not captured here) so
+            # this keeps working across reconnects, and guards None so a call that lands after
+            # disconnect() is a no-op rather than an AttributeError.
+            self.gripper.reupload = lambda: (
+                self.ctrl.reuploadScript() if self.ctrl is not None else None)
         self._abort.clear()
 
     def disconnect(self) -> None:

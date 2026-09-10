@@ -1,12 +1,15 @@
-"""Gripper actuators: ToolDOGripper (unchanged UR tool-DO behaviour, now factored out) and
-OnRobotModbusGripper (new — a minimal raw Modbus TCP client for the OnRobot Compute Box,
-exercised here against a fake socket that speaks just enough Modbus TCP to answer it)."""
+"""Gripper actuators: ToolDOGripper (unchanged UR tool-DO behaviour, now factored out),
+OnRobotModbusGripper (a minimal raw Modbus TCP client for the OnRobot Compute Box, exercised
+here against a fake socket that speaks just enough Modbus TCP to answer it), and
+OnRobotURCapGripper (drives the OnRobot unified URCap's rg_grip(...) through a one-shot URScript
+program, exercised against fake primary/secondary-interface sockets)."""
 import struct
 
 import pytest
 
 from hub.kit_study.robotd.base import RobotError
-from hub.kit_study.robotd.gripper import OnRobotModbusGripper, ToolDOGripper
+from hub.kit_study.robotd.gripper import (OnRobotModbusGripper, OnRobotURCapGripper,
+                                          ToolDOGripper, encode_robot_message)
 from hub.kit_study.robotd.ur import URBackend
 from tests.test_robotd_ur import CAL, FakeControl, FakeIO, FakeReceive, FakeRobot
 
@@ -254,3 +257,207 @@ def test_urbackend_connect_and_disconnect_delegate_to_gripper():
     assert fg.connected is True
     b.disconnect()
     assert fg.connected is False
+
+
+# ------------------------------------------------------------------- OnRobotURCapGripper
+class FakeStreamSocket:
+    """Feeds pre-built bytes to `recv()`, slicing them off an internal buffer, and returns
+    b"" (i.e. "closed by peer") once exhausted — enough to drive
+    `OnRobotURCapGripper`'s primary-interface listener loop to completion without a real
+    socket or real blocking."""
+
+    def __init__(self, packets=()):
+        self._buf = b"".join(packets)
+        self.closed = False
+
+    def settimeout(self, t):
+        pass
+
+    def recv(self, n: int) -> bytes:
+        chunk, self._buf = self._buf[:n], self._buf[n:]
+        return chunk
+
+    def sendall(self, data: bytes) -> None:
+        raise AssertionError("the primary-interface socket should never be written to")
+
+    def close(self):
+        self.closed = True
+
+
+class FakeSecondarySocket:
+    """Captures the one URScript program `OnRobotURCapGripper` sends over port 30002."""
+
+    def __init__(self, raise_on_sendall=None):
+        self.sent = None
+        self.closed = False
+        self._raise = raise_on_sendall
+
+    def settimeout(self, t):
+        pass
+
+    def sendall(self, data: bytes) -> None:
+        if self._raise is not None:
+            raise self._raise
+        self.sent = data
+
+    def recv(self, n: int) -> bytes:
+        return b""
+
+    def close(self):
+        self.closed = True
+
+
+def make_urcap_gripper(primary_packets=(), reupload=None, **kwargs):
+    primary = FakeStreamSocket(primary_packets)
+    secondary = FakeSecondarySocket()
+
+    def sock_factory(addr, timeout=None):
+        _ip, port = addr
+        if port == OnRobotURCapGripper.PRIMARY_PORT:
+            return primary
+        assert port == OnRobotURCapGripper.SECONDARY_PORT
+        return secondary
+
+    kwargs.setdefault("timeout_s", 1.0)
+    kwargs.setdefault("sleep", lambda s: None)
+    g = OnRobotURCapGripper("10.0.0.5", sock_factory=sock_factory, reupload=reupload, **kwargs)
+    return g, primary, secondary
+
+
+# --------------------------------------------------------------------------- program build
+def test_urcap_program_build_preserves_preamble_verbatim_and_substitutes_body(tmp_path):
+    template = (
+        'def unnamed():\n'
+        '  set_tool_voltage(24)\n'
+        '  # begin: URCap Installation Node\n'
+        '  while (True):\n'
+        '    $ 1 "Robot Program"\n'
+        'on_return = rg_grip(0.0, -1.0, tool_index = 0, blocking = True, depth_comp = False, '
+        'popupmsg = True)\n'
+        '  end\n'
+        'end\n'
+    )
+    script = tmp_path / "template.script"
+    script.write_text(template)
+    g, _, _ = make_urcap_gripper(script_path=script)
+
+    expected_preamble = template.split("  while (True):\n")[0]
+    assert g._preamble == expected_preamble
+
+    program = g._render_program(42.5, 15.3)
+    assert program == (
+        expected_preamble
+        + '  textmsg("KIT rg_grip start")\n'
+        + '  on_return = rg_grip(42.5, 15.3, tool_index = 0, blocking = True, '
+          'depth_comp = False, popupmsg = True)\n'
+        + '  textmsg("KIT rg_grip done")\n'
+        + '  sleep(0.3)\n'
+        + 'end\n'
+    )
+
+
+def test_urcap_program_build_against_real_archived_template():
+    g, _, _ = make_urcap_gripper(open_width_mm=100.0, close_width_mm=20.0, force_n=20.0)
+    program = g._render_program(g.close_width_mm, g.force_n)
+    assert program.startswith(g._preamble)
+    assert "URCap Installation Node" in g._preamble
+    assert "while (True):" not in program.split(g._preamble, 1)[1]
+    assert program.rstrip("\n").endswith("end")
+    assert "rg_grip(20.0, 20.0, tool_index = 0, blocking = True, depth_comp = False, " \
+           "popupmsg = True)" in program
+
+
+def test_urcap_missing_while_marker_raises_robot_error(tmp_path):
+    script = tmp_path / "broken.script"
+    script.write_text("def unnamed():\n  set_tool_voltage(24)\nend\n")
+    with pytest.raises(RobotError, match="while"):
+        OnRobotURCapGripper("10.0.0.5", script_path=script, sleep=lambda s: None)
+
+
+# ------------------------------------------------------------------------- success / failure
+def test_urcap_open_success_path_sends_program_and_watches_messages():
+    calls = []
+    packets = [
+        encode_robot_message("PROGRAM_143_STARTED"),
+        encode_robot_message("KIT rg_grip start"),
+        encode_robot_message("KIT rg_grip done"),
+        encode_robot_message("PROGRAM_143_STOPPED"),
+    ]
+    g, _primary, secondary = make_urcap_gripper(
+        primary_packets=packets, reupload=lambda: calls.append("reupload"),
+        open_width_mm=90.0, force_n=12.0)
+
+    g.open()
+
+    assert g.is_closed() is False
+    assert secondary.sent is not None
+    program = secondary.sent.decode("utf-8")
+    assert "rg_grip(90.0, 12.0, tool_index = 0" in program
+    assert "KIT rg_grip done" in g.last_messages
+    assert calls == ["reupload"]
+
+
+def test_urcap_close_fails_when_program_stops_without_done_message():
+    calls = []
+    packets = [
+        encode_robot_message("PROGRAM_9_STARTED"),
+        encode_robot_message("PROGRAM_9_STOPPED"),
+    ]
+    g, _primary, _secondary = make_urcap_gripper(
+        primary_packets=packets, reupload=lambda: calls.append("reupload"))
+
+    with pytest.raises(RobotError, match="STOPPED"):
+        g.close()
+    assert g.is_closed() is None          # unchanged on failure
+    assert calls == ["reupload"]          # always called, even on failure
+
+
+def test_urcap_fails_on_no_gripper_connected_message():
+    calls = []
+    packets = [encode_robot_message("No RG gripper connected")]
+    g, _primary, _secondary = make_urcap_gripper(
+        primary_packets=packets, reupload=lambda: calls.append("reupload"))
+
+    with pytest.raises(RobotError, match="No RG gripper connected"):
+        g.open()
+    assert calls == ["reupload"]
+
+
+def test_urcap_times_out_when_no_terminal_message_arrives():
+    calls = []
+    g, _primary, _secondary = make_urcap_gripper(
+        primary_packets=[], reupload=lambda: calls.append("reupload"), timeout_s=0.05)
+
+    with pytest.raises(RobotError, match="timeout"):
+        g.close()
+    assert calls == ["reupload"]
+
+
+# ------------------------------------------------------------------ URBackend wiring
+def test_urbackend_connect_wires_urcap_gripper_reupload_when_none_given():
+    robot = FakeRobot()
+    c, r, io = FakeControl(robot), FakeReceive(robot), FakeIO()
+    g = OnRobotURCapGripper("192.168.131.140", sleep=lambda s: None)
+    b = URBackend("192.168.131.140", CAL, rtde_factory=lambda ip: (c, r, io), gripper=g,
+                  gripper_settle_s=0.0, poll_s=0.0)
+
+    b.connect()
+    assert g.reupload is not None
+    g.reupload()
+    assert ("reuploadScript",) in c.calls
+
+    b.disconnect()
+    g.reupload()   # must be a no-op, not an AttributeError, once ctrl is torn down
+
+
+def test_urbackend_connect_does_not_override_an_explicit_reupload():
+    robot = FakeRobot()
+    c, r, io = FakeControl(robot), FakeReceive(robot), FakeIO()
+    calls = []
+    custom = lambda: calls.append("custom")   # noqa: E731
+    g = OnRobotURCapGripper("192.168.131.140", sleep=lambda s: None, reupload=custom)
+    b = URBackend("192.168.131.140", CAL, rtde_factory=lambda ip: (c, r, io), gripper=g,
+                  gripper_settle_s=0.0, poll_s=0.0)
+
+    b.connect()
+    assert g.reupload is custom

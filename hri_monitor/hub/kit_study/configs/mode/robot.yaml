@@ -5,4 +5,9 @@ robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calib
         # kind: onrobot_modbus — direct Modbus TCP to the box, bypasses the URCap:
         # gripper: {kind: onrobot_modbus, ip: 192.168.1.1, port: 502, unit_id: 65,
         #           force_n: 20.0, open_width_mm: 100.0, close_width_mm: 25.0, settle_s: 1.0}
+        # kind: onrobot_urcap — drive rg_grip(...) through the OnRobot URCap itself (needs it
+        #           installed and connected on the pendant); talks to the UR (robot.ip above),
+        #           not a separate box, so `ip` here is optional:
+        # gripper: {kind: onrobot_urcap, force_n: 20.0, open_width_mm: 100.0,
+        #           close_width_mm: 20.0, timeout_s: 15.0}
 supply: {lookahead: 1, side: C, pace: normal, announce: false}

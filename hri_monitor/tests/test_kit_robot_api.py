@@ -206,6 +206,29 @@ def test_build_backend_onrobot_modbus_gripper():
     assert backend.gripper.settle_s == 0.5
 
 
+def test_build_backend_onrobot_urcap_gripper_defaults_ip_to_robot_ip():
+    from hub.kit_study.robotd.gripper import OnRobotURCapGripper
+    cfg = load_mode("ursim", overrides={"robot": {
+        "gripper": {"kind": "onrobot_urcap", "force_n": 15.0, "open_width_mm": 90.0,
+                    "close_width_mm": 18.0, "timeout_s": 5.0}}})
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, OnRobotURCapGripper)
+    assert backend.gripper.ip == "127.0.0.1"   # ursim.yaml robot.ip — same controller, no box
+    assert backend.gripper.force_n == 15.0
+    assert backend.gripper.open_width_mm == 90.0
+    assert backend.gripper.close_width_mm == 18.0
+    assert backend.gripper.timeout_s == 5.0
+
+
+def test_build_backend_onrobot_urcap_gripper_ip_override():
+    from hub.kit_study.robotd.gripper import OnRobotURCapGripper
+    cfg = load_mode("ursim", overrides={"robot": {
+        "gripper": {"kind": "onrobot_urcap", "ip": "10.9.8.7"}}})
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, OnRobotURCapGripper)
+    assert backend.gripper.ip == "10.9.8.7"
+
+
 def test_build_backend_unknown_gripper_kind_raises():
     cfg = load_mode("ursim", overrides={"robot": {"gripper": {"kind": "bogus"}}})
     with pytest.raises(ValueError, match="unknown gripper kind"):

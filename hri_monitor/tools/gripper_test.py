@@ -18,13 +18,24 @@ going through the app or the URCap:
     .venv/bin/python tools/gripper_test.py close --modbus 192.168.1.1
     .venv/bin/python tools/gripper_test.py cycle --modbus 192.168.1.1
     .venv/bin/python tools/gripper_test.py state --modbus 192.168.1.1   # raw status/width regs
+
+`--urcap [IP]` drives the OnRobot unified URCap's rg_grip(...) the way the app does once the
+URCap is (re)installed on the pendant: sends a one-shot URScript program over the UR's secondary
+interface (30002) and watches the primary interface (30001) for completion — no separate box
+IP, it talks straight to the robot controller. Prints every RobotMessage text it captured, so a
+"Missing URCap" / "No RG gripper connected" popup on the pendant shows up here too:
+
+    .venv/bin/python tools/gripper_test.py open  --urcap
+    .venv/bin/python tools/gripper_test.py close --urcap
+    .venv/bin/python tools/gripper_test.py cycle --urcap
+    .venv/bin/python tools/gripper_test.py open  --urcap 147.250.35.40   # explicit robot IP
 """
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from hub.kit_study.robotd.gripper import OnRobotModbusGripper  # noqa: E402
+from hub.kit_study.robotd.gripper import OnRobotModbusGripper, OnRobotURCapGripper  # noqa: E402
 from hub.kit_study.robotd.ur import GRIPPER_TOOL_DO  # noqa: E402
 
 IP = "147.250.35.40"
@@ -74,6 +85,31 @@ def _run_modbus(cmd: str, ip: str) -> int:
     return 0
 
 
+def _run_urcap(cmd: str, ip: str) -> int:
+    g = OnRobotURCapGripper(ip)
+    print(f"gripper via OnRobot URCap on {ip} (secondary 30002 / primary 30001), "
+          f"open={g.open_width_mm}mm close={g.close_width_mm}mm force={g.force_n}N")
+
+    def act(name: str, fn) -> None:
+        try:
+            fn()
+            print(f"  {name} -> ok")
+        except Exception as e:
+            print(f"  {name} -> FAILED: {e}")
+        for line in g.last_messages:
+            print(f"      msg: {line}")
+
+    if cmd == "open":
+        act("open", g.open)
+    elif cmd == "close":
+        act("close", g.close)
+    elif cmd == "cycle":
+        act("open", g.open); act("close", g.close); act("open", g.open)
+    elif cmd == "state":
+        print(f"  is_closed() -> {g.is_closed()}")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args or args[0] not in ("open", "close", "cycle", "state"):
@@ -84,6 +120,10 @@ def main() -> int:
         i = rest.index("--modbus")
         ip = rest[i + 1] if i + 1 < len(rest) else IP
         return _run_modbus(cmd, ip)
+    if "--urcap" in rest:
+        i = rest.index("--urcap")
+        ip = rest[i + 1] if i + 1 < len(rest) else IP
+        return _run_urcap(cmd, ip)
     ip = rest[0] if rest else IP
     return _run_tool_do(cmd, ip)
 
