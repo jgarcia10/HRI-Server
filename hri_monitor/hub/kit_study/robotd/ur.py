@@ -81,7 +81,7 @@ class URBackend(RobotBackend):
 
     def __init__(self, ip: str, calibration: dict, speeds: dict | None = None,
                  gripper_settle_s: float = 1.0, rtde_factory=None,
-                 gripper: Gripper | None = None,
+                 gripper: Gripper | None = None, gripper_close_high: bool = True,
                  poll_s: float = POLL_S, move_timeout_s: float = MOVE_TIMEOUT_S,
                  stop_timeout_s: float = STOP_TIMEOUT_S, reach_grace_s: float = REACH_GRACE_S,
                  clock=time.monotonic):
@@ -92,8 +92,9 @@ class URBackend(RobotBackend):
         self._factory = rtde_factory or _default_factory
         # `settle_s=0.0`: URBackend does its own *interruptible* settle wait (see
         # _approach_and/open_gripper) so the default gripper must not sleep twice.
+        # `gripper_close_high=False`: the lab RG2 v2 closes on DO0 = 0 and opens on DO0 = 1.
         self.gripper = gripper or ToolDOGripper(io_getter=lambda: self.io, do=GRIPPER_TOOL_DO,
-                                                 settle_s=0.0)
+                                                 settle_s=0.0, close_high=gripper_close_high)
         self.poll_s = float(poll_s)
         self.move_timeout_s = float(move_timeout_s)
         self.stop_timeout_s = float(stop_timeout_s)

@@ -1,7 +1,8 @@
 robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: false,
-        gripper: {kind: tool_do}}
-        # RG2 v2 on the CB3 needs the OnRobot Compute Box either way (see RUNBOOK_robot.md §C.3):
-        # kind: tool_do        — UR tool DO0; requires the OnRobot URCap connected to the box.
+        gripper: {kind: tool_do, close_high: false}}
+        # Lab RG2 v2 (verified 2026-09-10): pendant Installation → I/O, tool output "controlled by
+        # user" (NOT by OnRobot); then tool DO0 = 1 OPENS and DO0 = 0 CLOSES → close_high: false.
+        # kind: tool_do        — UR tool DO0 level; close_high selects the polarity.
         # kind: onrobot_modbus — direct Modbus TCP to the box, bypasses the URCap:
         # gripper: {kind: onrobot_modbus, ip: 192.168.1.1, port: 502, unit_id: 65,
         #           force_n: 20.0, open_width_mm: 100.0, close_width_mm: 25.0, settle_s: 1.0}

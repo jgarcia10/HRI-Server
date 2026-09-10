@@ -6,6 +6,7 @@ thing to check on site: does the OnRobot actually open/close on tool DO0?
     .venv/bin/python tools/gripper_test.py close         # DO0 = True
     .venv/bin/python tools/gripper_test.py cycle         # open, close, open (1.5 s apart)
     .venv/bin/python tools/gripper_test.py state         # read DO0 back, no actuation
+    .venv/bin/python tools/gripper_test.py cycle --close-low   # lab RG2 v2: DO0=1 opens, DO0=0 closes
 
 If nothing moves, the OnRobot is driven another way (URCap / Compute Box Modbus) and
 URBackend.pick/open_gripper need a different actuator — note the gripper model.
@@ -41,7 +42,8 @@ from hub.kit_study.robotd.ur import GRIPPER_TOOL_DO  # noqa: E402
 IP = "147.250.35.40"
 
 
-def _run_tool_do(cmd: str, ip: str) -> int:
+def _run_tool_do(cmd: str, ip: str, close_high: bool = True) -> int:
+    """close_high=False → DO0=0 closes, DO0=1 opens (the lab RG2 v2 in user-controlled tool-output mode)."""
     import rtde_io, rtde_receive
     io = rtde_io.RTDEIOInterface(ip)
     recv = rtde_receive.RTDEReceiveInterface(ip)
@@ -49,9 +51,10 @@ def _run_tool_do(cmd: str, ip: str) -> int:
         bits = int(recv.getActualDigitalOutputBits())
         return bool(bits >> (16 + GRIPPER_TOOL_DO) & 1)      # tool DOs are bits 16-17
     def set_(close: bool):
-        ok = io.setToolDigitalOut(GRIPPER_TOOL_DO, close)
+        level = close if close_high else (not close)
+        ok = io.setToolDigitalOut(GRIPPER_TOOL_DO, level)
         time.sleep(1.5)
-        print(f"  setToolDigitalOut({GRIPPER_TOOL_DO}, {close}) -> {ok}; DO0 reads {do0()}")
+        print(f"  {'close' if close else 'open '} -> setToolDigitalOut({GRIPPER_TOOL_DO}, {level}) -> {ok}; DO0 reads {do0()}")
     print(f"gripper via tool DO{GRIPPER_TOOL_DO} on {ip}; DO0 currently {do0()}")
     if cmd == "open":
         set_(False)
@@ -124,8 +127,10 @@ def main() -> int:
         i = rest.index("--urcap")
         ip = rest[i + 1] if i + 1 < len(rest) else IP
         return _run_urcap(cmd, ip)
+    close_high = "--close-low" not in rest
+    rest = [a for a in rest if a != "--close-low"]
     ip = rest[0] if rest else IP
-    return _run_tool_do(cmd, ip)
+    return _run_tool_do(cmd, ip, close_high)
 
 
 if __name__ == "__main__":

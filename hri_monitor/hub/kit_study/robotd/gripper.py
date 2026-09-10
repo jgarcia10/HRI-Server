@@ -95,11 +95,15 @@ class ToolDOGripper(Gripper):
 
     name = "tool_do"
 
-    def __init__(self, io_getter, do: int = 0, settle_s: float = 1.0, sleep=time.sleep):
+    def __init__(self, io_getter, do: int = 0, settle_s: float = 1.0, sleep=time.sleep,
+                 close_high: bool = True):
         self._io_getter = io_getter
         self.do = int(do)
         self.settle_s = float(settle_s)
         self._sleep = sleep
+        # Lab RG2 v2 with the tool output "controlled by user": DO0 = 0 closes, DO0 = 1 opens
+        # → close_high=False. Keep True as the default for the generic PNP-style gripper.
+        self.close_high = bool(close_high)
         self._closed: bool | None = False
 
     def connect(self) -> None:
@@ -110,7 +114,8 @@ class ToolDOGripper(Gripper):
 
     def _set(self, close: bool) -> None:
         io = self._io_getter()
-        if not io.setToolDigitalOut(self.do, close):
+        level = close if self.close_high else (not close)
+        if not io.setToolDigitalOut(self.do, level):
             raise RobotError("gripper command refused")
         self._closed = close
         if self.settle_s:

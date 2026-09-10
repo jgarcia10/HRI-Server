@@ -190,6 +190,16 @@ def test_build_backend_default_gripper_is_tool_do():
     assert backend.gripper.do == 0
 
 
+def test_build_backend_tool_do_polarity_from_config():
+    """robot.gripper.close_high: false (the lab RG2 v2) reaches the default ToolDOGripper;
+    the shipped robot.yaml carries exactly that setting."""
+    from hub.kit_study.robotd.gripper import ToolDOGripper
+    cfg = load_mode("ursim", overrides={"robot": {"gripper": {"kind": "tool_do", "close_high": False}}})
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, ToolDOGripper) and backend.gripper.close_high is False
+    assert load_mode("robot")["robot"]["gripper"] == {"kind": "tool_do", "close_high": False}
+
+
 def test_build_backend_onrobot_modbus_gripper():
     from hub.kit_study.robotd.gripper import OnRobotModbusGripper
     cfg = load_mode("ursim", overrides={"robot": {

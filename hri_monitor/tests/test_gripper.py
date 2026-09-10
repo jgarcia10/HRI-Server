@@ -184,6 +184,16 @@ def test_tool_do_gripper_close_and_open():
     assert g.grip_detected() is None
 
 
+def test_tool_do_gripper_inverted_polarity_for_the_lab_rg2():
+    """Lab RG2 v2, tool output 'controlled by user': DO0 = 0 closes, DO0 = 1 opens."""
+    io = FakeIO()
+    g = ToolDOGripper(io_getter=lambda: io, do=0, settle_s=0.0, close_high=False)
+    g.close()
+    assert io.calls == [(0, False)] and g.is_closed() is True
+    g.open()
+    assert io.calls == [(0, False), (0, True)] and g.is_closed() is False
+
+
 def test_tool_do_gripper_false_return_raises_robot_error():
     io = FakeIO()
     io.setToolDigitalOut = lambda out_id, level: False
