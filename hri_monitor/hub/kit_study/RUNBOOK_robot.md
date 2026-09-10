@@ -107,6 +107,37 @@ robot` refuses this shortcut (see section C.4).
     detection; needs *Installation → OnRobot Setup* to show the RG2) and **`onrobot_modbus`**
     for a Compute Box (Modbus TCP :502, unit 65). Both are tested with fakes only.
 
+    **Gripper recovery protocol** (RG2 v2 stops answering — verified sequence, 2026-09-10).
+    The gripper has three observable states on the tool connector, visible live with
+    `.venv/bin/python tools/gripper_check.py --watch` (read-only, 1 Hz):
+
+      | state | signature (24 V tool output) | what to do |
+      |---|---|---|
+      | READY | AI0 ≈ 10 V, DI1 high, ~85 mA | DO0 works: 1 opens, 0 closes |
+      | UNINITIALISED | AI0/AI1 ≈ 0.07 V, ~81 mA, DI quiet | needs the OnRobot init once (step 5) |
+      | alive, no handshake | AI0 ≈ 7–8 V, DI bits toggling by themselves | link problem → steps 1–4 |
+
+    1. Stop every program on the robot (pendant ■, no `run.py --mode robot` running). Never cut
+       the tool voltage from software (`set_tool_voltage(0)` resets the gripper into
+       UNINITIALISED); the app never does.
+    2. Power the controller **off** (☰ → Shutdown Robot). With it off: unlock the Quick Changer,
+       pull the gripper off, inspect/clean the pogo pins (isopropyl), re-seat it and lock the
+       lever until it clicks; check the short QC→M8 cable is screwed tight at both ends. Wait 20 s.
+    3. Power on. Load the installation the 2024 gripper program used: *Setup Robot → Load
+       installation → `default`* (tool output 24 V there; `default_1` has 0 V — never use it).
+       The pendant header must read INSTALLATION `default`.
+    4. *Installation → OnRobot Setup*: "Tool connector" must list **RG2** (not *Empty*). If Empty:
+       rescan/refresh if the page has it, wait 30 s, repeat step 2 once. Still Empty → the
+       QC↔gripper link is physically broken; stop here (OnRobot support).
+    5. Init once: *Installation → I/O* → tool output **"controlled by OnRobot"** → the gripper
+       **closes** (`--watch` shows READY) → back to **"controlled by user"** → *File → Save*
+       (installation `default`).
+    6. From the laptop: `.venv/bin/python tools/gripper_check.py` → must print the ✔ VERDICT
+       (writes only DO0, leaves it open). Then `run.py --mode robot` works unchanged
+       (`gripper: {kind: tool_do, close_high: false}`).
+    Rule for every lab day: steps 3 → 5 → 6 after powering the robot on — READY does not survive
+    a loss of tool power.
+
     **Bench check**: `.venv/bin/python tools/gripper_test.py cycle --close-low` (open → close →
     open through tool DO0 with the lab polarity; `open|close|state` likewise); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the Compute Box
     directly, or `--urcap [IP]` (defaults to the lab robot IP) to drive `rg_grip(...)` through
