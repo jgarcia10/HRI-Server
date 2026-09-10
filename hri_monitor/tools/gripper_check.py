@@ -84,7 +84,7 @@ def watch() -> int:
             di_b = int(recv.getActualDigitalInputBits()) >> 16 & 0b11
             if td:
                 print(f"{time.strftime('%H:%M:%S')}  {td['volt']:>2} V {td['cur']:.3f} A {td['temp']:.0f}°C  "
-                      f"AI0 {td['ai0']:5.2f} V  AI1 {td['ai1']:5.2f} V  DO1:0={do_b:02b}  DI1:0={di_b:02b}   {label(td, di_b, do_b)}")
+                      f"AI0 {td['ai0']:5.2f} V  AI1 {td['ai1']:5.2f} V  DO1:0={do_b:02b}  DI1:0={di_b:02b}   {label(td, di_b, do_b)}", flush=True)
             time.sleep(1.0)
     except KeyboardInterrupt:
         pass
