@@ -2,7 +2,8 @@
 """Definitive on-site check of the RG2 v2 in tool-DO mode (pendant: tool output "controlled by
 user"; DO0 = 1 opens, DO0 = 0 closes). Run from hri_monitor/:
 
-    .venv/bin/python tools/gripper_check.py [robot_ip]
+    .venv/bin/python tools/gripper_check.py [robot_ip]          # full check (writes DO0 open/close)
+    .venv/bin/python tools/gripper_check.py --watch             # live state only, writes nothing
 
 Prints a verdict per step. It only writes tool DO0 (what the app does) and leaves it at 1 (open).
 
@@ -19,7 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-IP = sys.argv[1] if len(sys.argv) > 1 else "147.250.35.40"
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+IP = next((a for a in ARGS if a.count(".") == 3), "147.250.35.40")   # ignore stray words like "cycle"
+WATCH = "--watch" in sys.argv
 OK, BAD, INFO = "\033[32m✔\033[0m", "\033[31m✘\033[0m", "  ·"
 
 
@@ -57,7 +60,42 @@ class ToolStream(threading.Thread):
         s.close()
 
 
+def label(td, di_bits, do_bits):
+    """Rough state label from the signatures seen on site (RG2 v2 on the CB3 tool connector)."""
+    if td["volt"] != 24:
+        return "NO TOOL POWER"
+    if td["ai0"] > 9.0 and (di_bits & 0b10):
+        return "READY (initialised; DO0 should work)"
+    if td["ai0"] < 1.0:
+        return "UNINITIALISED (just powered; needs the OnRobot init once)"
+    return "electronics alive, no valid handshake"
+
+
+def watch() -> int:
+    """Live view while you work on the pendant / Quick Changer. Ctrl-C to stop. Writes nothing."""
+    import rtde_receive
+    recv = rtde_receive.RTDEReceiveInterface(IP)
+    stream = ToolStream(IP); stream.start(); time.sleep(1.5)
+    print(f"watching {IP} — Ctrl-C to stop")
+    try:
+        while True:
+            td = stream.latest
+            do_b = int(recv.getActualDigitalOutputBits()) >> 16 & 0b11
+            di_b = int(recv.getActualDigitalInputBits()) >> 16 & 0b11
+            if td:
+                print(f"{time.strftime('%H:%M:%S')}  {td['volt']:>2} V {td['cur']:.3f} A {td['temp']:.0f}°C  "
+                      f"AI0 {td['ai0']:5.2f} V  AI1 {td['ai1']:5.2f} V  DO1:0={do_b:02b}  DI1:0={di_b:02b}   {label(td, di_b, do_b)}")
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stream.stop.set(); recv.disconnect()
+    return 0
+
+
 def main() -> int:
+    if WATCH:
+        return watch()
     import rtde_io, rtde_receive
     recv = rtde_receive.RTDEReceiveInterface(IP)
     io = rtde_io.RTDEIOInterface(IP)
