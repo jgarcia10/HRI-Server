@@ -1,2 +1,2 @@
-robot: {backend: ur, ip: 192.168.131.140, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: false}
+robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: false}
 supply: {lookahead: 1, side: C, pace: normal, announce: false}

@@ -73,9 +73,9 @@ block can be rehearsed; the poses are arbitrary and only meaningful inside URSim
 connectivity, RTDE motion and the pick/place/gripper sequence, never table geometry). `--mode
 robot` refuses this shortcut (see section C.4).
 
-## C. Lab: UR5 (192.168.131.140, wired Ethernet from this PC)
+## C. Lab: UR5 (147.250.35.40, wired Ethernet from this PC)
 
- 1. Network: set this PC's wired interface to `192.168.131.x/24`; `ping 192.168.131.140`. If the
+ 1. Network: set this PC's wired interface to `147.250.35.x/24 (ENSTA subnet; laptop profile `ur5-lab` = 147.250.35.134)`; `ping 147.250.35.40`. If the
     UR5 is unreachable when the app starts, `run.py` still comes up — the robot card just shows
     "disconnected" and every skill request fails until it connects. Fix the network, then press
     **Reconnect** on the robot card (`POST /api/kit/robot/connect`) rather than restarting the
@@ -90,7 +90,7 @@ robot` refuses this shortcut (see section C.4).
     (`hub/kit_study/runtime.py:build_backend` raises `RobotError` otherwise) — it will never
     silently fall back to the example calibration on the real robot.
 
-        .venv/bin/python -m hub.kit_study.robotd.teach_poses --ip 192.168.131.140 \
+        .venv/bin/python -m hub.kit_study.robotd.teach_poses --ip 147.250.35.40 \
           --out hub/kit_study/configs/calibration.yaml \
           --slots home transit L C R \
             RD1 RD2 RD3 OR1 OR2 OR3 BL1 BL2 SF1 SF2 SF3 LM1 LM2 LM3
