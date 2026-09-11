@@ -64,6 +64,9 @@ def main(argv=None, factory=_rtde_factory) -> int:
     ap.add_argument("--ip", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--slots", nargs="+", required=True)
+    ap.add_argument("--merge", action="store_true",
+                    help="update only the taught poses inside an existing --out file "
+                         "(use it to re-teach one slot without redoing all 19)")
     args = ap.parse_args(argv)
     ctrl, recv = factory(args.ip)
     try:
@@ -75,9 +78,20 @@ def main(argv=None, factory=_rtde_factory) -> int:
     finally:
         _close(ctrl)
         _close(recv)
+    out = Path(args.out)
+    if args.merge and out.exists():
+        base = yaml.safe_load(out.read_text()) or {}
+        base.setdefault("depot", {}).update(cal.get("depot", {}))
+        base.setdefault("staging", {}).update(cal.get("staging", {}))
+        for name in ("home", "transit", "approach_dz_m"):
+            if name in cal and (name != "approach_dz_m" or "approach_dz_m" not in base):
+                base[name] = cal[name]
+        cal = base
+        print(f"merged {len(args.slots)} pose(s) into the existing {out}")
     cal["robot_ip"] = args.ip
-    Path(args.out).write_text(yaml.safe_dump(cal, sort_keys=False))
-    print(f"wrote {args.out} ({len(cal['depot'])} depot slots, {len(cal['staging'])} staging slots)")
+    out.write_text(yaml.safe_dump(cal, sort_keys=False))
+    print(f"wrote {out} ({len(cal.get('depot', {}))} depot slots, "
+          f"{len(cal.get('staging', {}))} staging slots)")
     return 0
 
 
