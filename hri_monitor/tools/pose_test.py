@@ -7,7 +7,17 @@ staging slot, one slot at a time, with the operator watching.
     .venv/bin/python tools/pose_test.py --all                       # all 14, pausing between
     .venv/bin/python tools/pose_test.py --all --no-gripper          # motion only, jaws untouched
 
-Every motion is the real thing: transit → 5 cm above the slot → straight down → gripper →
+Comparing speeds — `--no-gripper` also drops the gripper waits, so what is left is pure arm
+motion and the times are comparable side by side. Nothing needs to be in the bins for this:
+
+    .venv/bin/python tools/pose_test.py --all --no-gripper --yes --pace normal
+    .venv/bin/python tools/pose_test.py --all --no-gripper --yes --pace fast
+
+Then repeat with real bricks and the jaws live, one slot first:
+
+    .venv/bin/python tools/pose_test.py --slots SF2 --pace fast
+
+Every motion is the real thing: transit → 3 cm above the slot → straight down → gripper →
 straight up → transit → above the staging slot → down → release → up. Errors are reported with
 the backend's own message (unreachable target, IK off the taught branch, protective stop…).
 
@@ -26,13 +36,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from hub.kit_study.robotd.base import RobotError  # noqa: E402
 from hub.kit_study.runtime import build_backend, load_mode  # noqa: E402
 
-ORDER = ["RD1", "RD2", "RD3", "OR1", "OR2", "OR3", "BL1", "BL2",
-         "SF1", "SF2", "SF3", "LM1", "LM2", "LM3"]
+# Back row first, exactly as a real order runs: the mat is beyond the depot, so carrying a
+# brick out over bins that are still full is what nudges them out of their pockets.
+ORDER = ["RD3", "RD2", "RD1", "OR3", "OR2", "OR1", "BL2", "BL1",
+         "SF3", "SF2", "SF1", "LM3", "LM2", "LM1"]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ip", default=None, help="override the IP in configs/mode/robot.yaml")
+    ap.add_argument("--mode", default="robot",
+                    help="configs/mode/<name>.yaml — use `sim` to rehearse this script itself")
     ap.add_argument("--slots", nargs="*", default=None)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--to", default="C", choices=["L", "C", "R"], help="staging slot to release on")
@@ -50,10 +64,17 @@ def main() -> int:
     if not slots:
         print(__doc__); return 2
 
-    cfg = load_mode("robot", overrides={"robot": {"ip": args.ip}} if args.ip else None)
+    cfg = load_mode(args.mode, overrides={"robot": {"ip": args.ip}} if args.ip else None)
     backend = build_backend(cfg)
-    backend.settle = float(args.settle)          # closing: jaws travel from fully open
-    if args.no_gripper:                      # swap in a no-op actuator, jaws never move
+    # `sim` has no gripper waits at all; only the UR backend carries these.
+    if hasattr(backend, "settle"):
+        backend.settle = float(args.settle)      # closing: jaws travel from fully open
+    if args.no_gripper:
+        # Motion only: drop the gripper waits too. They are fixed seconds of standing still
+        # that would swamp the very thing a --pace comparison is trying to measure.
+        if hasattr(backend, "settle"):
+            backend.settle = backend.open_settle = 0.0
+                                             # swap in a no-op actuator, jaws never move
         class _Frozen:
             name = "frozen"
             def connect(self): pass
@@ -64,11 +85,12 @@ def main() -> int:
             def grip_detected(self): return None
         backend.gripper = _Frozen()
 
-    print(f"conectando a {backend.ip} …  (cierre {backend.settle:.1f} s · apertura "
-          f"{backend.open_settle:.1f} s · ritmo {args.pace})")
+    close_s, open_s = getattr(backend, "settle", 0.0), getattr(backend, "open_settle", 0.0)
+    print(f"conectando a {getattr(backend, 'ip', backend.name)} …  (cierre {close_s:.1f} s · "
+          f"apertura {open_s:.1f} s · ritmo {args.pace})")
     backend.connect()
     backend.set_pace(args.pace)
-    ok, failed = [], []
+    ok, failed, times = [], [], []
     try:
         if not args.no_home:
             print("home …"); backend.home()
@@ -80,8 +102,9 @@ def main() -> int:
                 t_pick = time.time() - t0
                 print(f"    pick  ok  ({t_pick:.1f} s)")
                 backend.place(args.to)
-                print(f"    place ok  ({time.time() - t0 - t_pick:.1f} s)   total {time.time()-t0:.1f} s")
-                ok.append(slot)
+                total = time.time() - t0
+                print(f"    place ok  ({total - t_pick:.1f} s)   total {total:.1f} s")
+                ok.append(slot); times.append(total)
             except RobotError as e:
                 print(f"    ✘ {type(e).__name__}: {e}")
                 failed.append((slot, str(e)))
@@ -104,6 +127,13 @@ def main() -> int:
             pass
         backend.disconnect()
     print(f"\nresumen: {len(ok)} ok {ok}")
+    if times:
+        n = len(times)
+        print(f"   ritmo {args.pace} · {n} ciclo(s) · total {sum(times):.1f} s · "
+              f"media {sum(times)/n:.1f} s · el más lento {max(times):.1f} s"
+              + ("   (solo movimiento, sin esperas de pinza)" if args.no_gripper else
+                 f"   (incluye {close_s:.1f} s de cierre + "
+                 f"{open_s:.1f} s de apertura por ciclo)"))
     if failed:
         print("fallaron:")
         for s, e in failed:
