@@ -4,7 +4,8 @@ user"; DO0 = 1 opens, DO0 = 0 closes). Run from hri_monitor/:
 
     .venv/bin/python tools/gripper_check.py [robot_ip]          # full check (writes DO0 open/close)
     .venv/bin/python tools/gripper_check.py --watch             # live state only, writes nothing
-    .venv/bin/python tools/gripper_check.py --matrix            # all 4 output combinations, decisive
+    .venv/bin/python tools/gripper_check.py --matrix            # all 4 combinations (short dwells)
+    .venv/bin/python tools/gripper_check.py --pulse             # self-timed open/close x2, what the app does
 
 Prints a verdict per step. It only writes tool DO0 (what the app does) and leaves it at 1 (open).
 
@@ -25,6 +26,7 @@ ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 IP = next((a for a in ARGS if a.count(".") == 3), "147.250.35.40")   # ignore stray words like "cycle"
 WATCH = "--watch" in sys.argv
 MATRIX = "--matrix" in sys.argv
+PULSE = "--pulse" in sys.argv
 OK, BAD, INFO = "\033[32m✔\033[0m", "\033[31m✘\033[0m", "  ·"
 
 
@@ -114,7 +116,7 @@ def matrix() -> int:
             io.setToolDigitalOut(1 if d0 else 0, False); time.sleep(0.15)   # break before make
             io.setToolDigitalOut(1, d1); io.setToolDigitalOut(0, d0)
             st.samples.clear(); dis = set(); t0 = time.time()
-            while time.time() - t0 < 5.0:
+            while time.time() - t0 < 1.5:   # never hold a direction for seconds: it stalls the motor
                 dis.add(int(recv.getActualDigitalInputBits()) >> 16 & 0b11); time.sleep(0.05)
             s = list(st.samples); cur = [x["cur"] for x in s]
             rows.append(max(cur))
@@ -127,9 +129,68 @@ def matrix() -> int:
     return 0 if spread > 0.03 else 1
 
 
+def smart_pulse(io, st, close: bool, max_s: float = 3.0, idle_a: float = 0.095):
+    """Assert one direction, release as soon as the motor current falls back to idle.
+
+    Holding a direction after the fingers reach their stop stalls the motor and latches the
+    gripper fault (AI1 ~6.4 V), so the command is never held longer than the motion needs.
+    Break-before-make; never both lines high; always ends neutral.
+    """
+    other, want = (1, 0) if close else (0, 1)
+    io.setToolDigitalOut(other, False); time.sleep(0.15)
+    st.samples.clear()
+    t0 = time.time(); io.setToolDigitalOut(want, True)
+    moved = False; stop_t = None
+    while time.time() - t0 < max_s:
+        s = st.latest
+        if s["cur"] > idle_a:
+            moved = True
+        elif moved:
+            stop_t = time.time() - t0; break
+        if s["ai1"] > 5.0:
+            break
+        time.sleep(0.02)
+    io.setToolDigitalOut(want, False)
+    time.sleep(0.4)
+    s = st.latest
+    cur = [x["cur"] for x in st.samples] or [0]
+    state = "FAULT" if s["ai1"] > 5 else ("dark" if s["ai0"] < 1 else "ready" if s["ai1"] < 2 else "moving")
+    print(f"  {'CLOSE' if close else 'OPEN ':<5}  held {(stop_t or (time.time()-t0)):.2f} s"
+          f"  current {min(cur):.3f}-{max(cur):.3f} A  {'(motion seen)' if moved else '(NO motion)'}"
+          f"   AI0 {s['ai0']:5.2f} AI1 {s['ai1']:5.2f}  {state}", flush=True)
+    return moved and s["ai1"] < 5
+
+
+def pulse_mode() -> int:
+    """Close/open twice with self-timed pulses — the sequence the app will use."""
+    import rtde_io
+    io = rtde_io.RTDEIOInterface(IP)
+    io.setToolDigitalOut(0, False); io.setToolDigitalOut(1, False)
+    st = ToolStream(IP); st.start(); time.sleep(1.5)
+    s = st.latest
+    print(f"start: AI0 {s['ai0']:.2f} AI1 {s['ai1']:.2f} {s['cur']:.3f} A")
+    if s["ai0"] < 1:
+        print(f"{BAD} gripper is dark — wake it on the pendant (tool output controlled by OnRobot, then by user)")
+        st.stop.set(); io.disconnect(); return 1
+    if s["ai1"] > 5:
+        print(f"{BAD} gripper is FAULTED — see the recovery protocol in RUNBOOK_robot.md C.3")
+        st.stop.set(); io.disconnect(); return 1
+    ok = True
+    for close in (True, False, True, False):
+        ok = smart_pulse(io, st, close) and ok
+        time.sleep(0.8)
+    io.setToolDigitalOut(0, False); io.setToolDigitalOut(1, False)
+    st.stop.set(); io.disconnect()
+    print(f"\n{OK if ok else BAD} " + ("two full open/close cycles, no fault — this is what the app does" if ok
+          else "at least one command did not move the gripper or it faulted"))
+    return 0 if ok else 1
+
+
 def main() -> int:
     if WATCH:
         return watch()
+    if PULSE:
+        return pulse_mode()
     if MATRIX:
         return matrix()
     import rtde_io, rtde_receive
