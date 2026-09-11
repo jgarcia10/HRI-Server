@@ -38,7 +38,7 @@ def main() -> int:
     ap.add_argument("--pace", default="slow", choices=["slow", "normal"])
     ap.add_argument("--no-gripper", action="store_true", help="move only; never touch the jaws")
     ap.add_argument("--no-home", action="store_true", help="skip the initial home()")
-    ap.add_argument("--settle", type=float, default=8.5,
+    ap.add_argument("--settle", type=float, default=6.5,
                     help="seconds the gripper is given to travel (jaws start fully open ~110 mm; "
                          "reaching a 32 mm brick needs ~5 s of the ~7 s full stroke)")
     ap.add_argument("--yes", action="store_true", help="do not pause between slots")

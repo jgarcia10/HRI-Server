@@ -1,4 +1,4 @@
-robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 8.5, gripper_open_settle_s: 2.5, allow_example_calibration: false,
+robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 6.5, gripper_open_settle_s: 2.5, allow_example_calibration: false,
         gripper: {kind: tool_do, do: 0, close_high: true, settle_s: 5.0}}
         # Lab RG2 v2 (measured 2026-09-11): a SINGLE-LINE level-driven gripper on tool DO0.
         #   1. DO0 is the only control line: DO0 = 1 drives CLOSED, DO0 = 0 drives OPEN. It

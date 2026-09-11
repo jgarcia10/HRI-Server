@@ -20,6 +20,7 @@ thread serves /robot/stop and a ~3 Hz state monitor):
 """
 from __future__ import annotations
 
+import logging
 import math
 import threading
 import time
@@ -28,10 +29,22 @@ from typing import Callable
 
 import yaml
 
+log = logging.getLogger(__name__)
+
+
 from .base import (Aborted, EmergencyStop, RobotBackend, RobotError, RobotFault, ProtectiveStop,
                    RobotState, STAGING_SLOTS,
                    validate_depot_slot, validate_pace, validate_staging_slot)
 from .gripper import Gripper, OnRobotURCapGripper, ToolDOGripper
+
+
+class _IKCallFailed(RobotError):
+    """The controller's IK *call* failed (as opposed to answering off-branch).
+
+    On this cell at least one taught pose makes the controller's `getInverseKinematics`
+    kill the running RTDE control script, so the script has to be reuploaded before any
+    further motion is attempted."""
+
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
 DEFAULT_SPEEDS = {
@@ -61,7 +74,11 @@ STOP_TIMEOUT_S = 3.0         # bounded wait for the controller to report the sto
 REACH_GRACE_S = 0.3          # allow the arm to settle before declaring "target not reached"
 Q_TOL_RAD = 0.02             # per-joint tolerance for "moveJ reached its target"
 P_TOL_M = 0.003              # TCP position tolerance for "moveL reached its target"
-IK_BRANCH_TOL_RAD = 0.5      # IK result must stay on the taught branch
+# The guard exists to catch a *branch flip* (elbow up/down, wrist ±pi) — those are ~pi apart.
+# It must not reject a legitimate solution: measured on the lab cell, the depot poses sit at
+# sigma_min ~0.086, so the 3 cm vertical approach legitimately costs up to ~35 deg of joint
+# travel there. 0.5 rad rejected most of them; 1.2 rad still leaves a wide margin below pi.
+IK_BRANCH_TOL_RAD = 1.2      # IK result must stay on the taught branch
 AT_REST_QD = 0.01            # rad/s below which the arm counts as stopped
 STOP_DECEL = 2.0             # stopJ/stopL deceleration
 
@@ -345,7 +362,7 @@ class URBackend(RobotBackend):
         try:
             sol = self.ctrl.getInverseKinematics(list(pose), qnear=list(node["q"]))
         except Exception as e:
-            raise RobotError(f"IK solution rejected for {slot}: {e}") from e
+            raise _IKCallFailed(f"IK solution rejected for {slot}: {e}") from e
         ref = [float(x) for x in node["q"]]
         try:
             q = [float(x) for x in sol]
@@ -353,8 +370,40 @@ class URBackend(RobotBackend):
             raise RobotError(f"IK solution rejected for {slot}") from None
         if (len(q) != 6 or not all(math.isfinite(x) for x in q)
                 or max(abs(a - b) for a, b in zip(q, ref)) > IK_BRANCH_TOL_RAD):
-            raise RobotError(f"IK solution rejected for {slot}")
+            worst = (max(abs(a - b) for a, b in zip(q, ref))
+                     if len(q) == 6 and all(math.isfinite(x) for x in q) else float("nan"))
+            raise RobotError(
+                f"IK solution rejected for {slot}: off the taught branch by "
+                f"{math.degrees(worst):.0f}deg (limit {math.degrees(IK_BRANCH_TOL_RAD):.0f}deg) — "
+                "re-teach this pose with a more comfortable arm posture")
         return q
+
+    def _goto_above(self, slot: str, node: dict, above) -> None:
+        """Reach the approach point above a slot: joint move when the controller's IK is
+        usable, Cartesian move otherwise.
+
+        The controller's ``getInverseKinematics`` is not dependable on every taught pose in
+        this cell — it has returned solutions off the taught branch, and on one slot it kills
+        the RTDE control script outright. ``moveL`` asks the controller to solve the same
+        target internally, seeded from the current configuration, so it cannot branch-flip;
+        it is slower, which is why it is the fallback and not the default. If the point is
+        genuinely out of reach, moveL fails on its own and the slot is reported as before.
+        """
+        try:
+            q = self._ik(above, node, slot)
+        except RobotError as e:
+            log.warning("%s: IK unusable (%s) — approaching with a Cartesian move", slot, e)
+            if isinstance(e, _IKCallFailed):
+                # The failed call may have taken the control script with it; without this the
+                # fallback move would fail too, for a reason that has nothing to do with reach.
+                try:
+                    self.ctrl.reuploadScript()
+                except Exception:
+                    log.warning("%s: could not reupload the control script after the IK call",
+                                slot)
+            self._moveL(above)
+        else:
+            self._moveJ(q)
 
     # ---------------------------------------------------------------- motions
     def _approach_and(self, slot: str, node: dict, close: bool) -> None:
@@ -363,7 +412,7 @@ class URBackend(RobotBackend):
         pose = list(node["pose"])
         above = pose[:2] + [pose[2] + dz] + pose[3:]
         self._moveJ(self.cal["transit"]["q"])
-        self._moveJ(self._ik(above, node, slot))
+        self._goto_above(slot, node, above)
         self._moveL(pose)
         if close:
             self.gripper.close()

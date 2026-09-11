@@ -25,7 +25,7 @@ def record(ctrl, recv, names: list[str], prompt=None) -> dict:
     still leaves the arm in normal position-control mode instead of limp.
     """
     prompt = prompt or input        # resolved late so tests can patch builtins.input
-    cal = {"approach_dz_m": 0.05, "depot": {}, "staging": {}}
+    cal = {"approach_dz_m": 0.03, "depot": {}, "staging": {}}
     for name in names:
         if not ctrl.teachMode():
             raise RuntimeError(f"could not enable freedrive for {name!r} "

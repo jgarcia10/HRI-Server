@@ -509,15 +509,46 @@ def test_set_pace_is_allowed_while_stopped():
 @pytest.mark.parametrize("bad", [
     [],                                      # empty / no solution
     [0.0, 0.0, 0.0],                         # degenerate length
-    [x + 1.4 for x in Q],                    # far branch (> 0.5 rad from the taught q)
+    [x + 1.6 for x in Q],                    # far branch (> IK_BRANCH_TOL_RAD from taught q)
     [float("nan")] * 6,                      # non-finite
 ])
-def test_bad_ik_solution_is_rejected(bad):
+def test_unusable_ik_falls_back_to_a_cartesian_approach(bad):
+    """The controller's IK is not dependable on every taught pose (off-branch answers, and on
+    one slot it kills the control script). The backend must never moveJ onto such a solution,
+    but it must not lose the slot either: it reaches the approach point with moveL, which the
+    controller solves from the current configuration and so cannot branch-flip."""
     b, c, r, io = make()
     c.ik_result = bad
-    with pytest.raises(RobotError, match="IK solution rejected for RD1"):
-        b.pick("RD1")
-    assert [k[0] for k in c.calls] == ["moveJ", "ik"]   # never moveJ onto a bad solution
+    b.pick("RD1")
+    assert [k[0] for k in c.calls if k[0] in ("moveJ", "ik", "moveL")] == [
+        "moveJ", "ik", "moveL", "moveL", "moveL"]      # transit, IK, above, down, back up
+    moved_j = [k[1] for k in c.calls if k[0] == "moveJ"]
+    assert moved_j == [CAL["transit"]["q"]]            # never moveJ onto a bad solution
+
+
+def test_ik_call_that_kills_the_control_script_is_reuploaded_before_the_fallback():
+    """LM1 makes the controller's IK crash the RTDE control script. The fallback Cartesian
+    move would then fail for a reason that has nothing to do with reach, so the script is
+    restored first."""
+    b, c, r, io = make()
+
+    def boom(*a, **kw):
+        c.calls.append(("ik", list(a[0]) if a else []))
+        raise RuntimeError("control script stopped")
+    c.getInverseKinematics = boom
+    b.pick("RD1")
+    assert [k[0] for k in c.calls if k[0] in ("ik", "reuploadScript", "moveL")] == [
+        "ik", "reuploadScript", "moveL", "moveL", "moveL"]
+
+
+def test_ik_branch_guard_still_catches_a_flip_before_moving():
+    """The guard itself is intact: an off-branch answer is refused with a message naming the
+    slot and the distance, whatever the backend then does about it."""
+    b, c, r, io = make()
+    c.ik_result = [x + 1.6 for x in Q]
+    node = b.cal["depot"]["RD1"]
+    with pytest.raises(RobotError, match=r"IK solution rejected for RD1: off the taught branch"):
+        b._ik(node["pose"], node, "RD1")
 
 
 # ------------------------------------------------------------------- plumbing
