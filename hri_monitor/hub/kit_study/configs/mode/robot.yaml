@@ -1,5 +1,20 @@
-robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 6.5, gripper_open_settle_s: 2.5, allow_example_calibration: false,
-        gripper: {kind: tool_do, do: 0, close_high: true, settle_s: 5.0}}
+robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 6.5, gripper_open_settle_s: 1.5, allow_example_calibration: false,
+        gripper: {kind: tool_do, do: 0, close_high: true},
+        speeds: {slow:   {joint_v: 0.30, joint_a: 0.50, lin_v: 0.08, lin_a: 0.30},
+                 normal: {joint_v: 0.60, joint_a: 0.80, lin_v: 0.15, lin_a: 0.50},
+                 fast:   {joint_v: 1.10, joint_a: 1.50, lin_v: 0.30, lin_a: 0.90}}}
+        # `speeds` is the arm, per pace level — the wizard's "Robot speed" switch picks one
+        # live. joint_v is rad/s (the UR5's own ceiling is 3.14) and lin_v m/s. This is the
+        # only speed that can actually be tuned: the RG2's jaws run at a fixed rate set in
+        # the gripper's own firmware, so `gripper_settle_s` below is a *waiting* time, not a
+        # speed. Raise a level only after watching a full supply cycle at it.
+        #
+        # gripper_settle_s 6.5 = how long the jaws are given to close. They always rest fully
+        # open (~110 mm) because DO0 = 0 is held between cycles, so every grasp travels most
+        # of the ~7-9 s full stroke to reach a 32 mm brick. Do not trim it without re-testing
+        # every depot slot: a short close is a dropped brick mid-carry.
+        # gripper_open_settle_s 1.5 = release only has to free the brick, a few millimetres;
+        # the jaws keep travelling to fully open during the retreat and the transit move.
         # Lab RG2 v2 (measured 2026-09-11): a SINGLE-LINE level-driven gripper on tool DO0.
         #   1. DO0 is the only control line: DO0 = 1 drives CLOSED, DO0 = 0 drives OPEN. It
         #      travels continuously while the level is applied — full stroke takes ~7 s.

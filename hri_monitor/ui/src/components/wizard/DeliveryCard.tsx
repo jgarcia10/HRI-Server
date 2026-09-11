@@ -74,14 +74,15 @@ export function DeliveryCard({
         />
         <Segmented<string>
           label="Robot speed"
-          helper="slower feels calmer and safer"
+          helper="how briskly the arm moves between the bins and the mat"
           value={pace}
           disabled={!active}
           disabledTitle={disabledTitle}
           onChange={(v) => onProfile({ pace: v })}
           options={[
-            { value: "slow", label: "Slow" },
-            { value: "normal", label: "Normal" },
+            { value: "slow", label: "Slow", sub: "calm" },
+            { value: "normal", label: "Normal", sub: "default" },
+            { value: "fast", label: "Fast", sub: "shorter waits" },
           ]}
         />
       </div>

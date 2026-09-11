@@ -239,14 +239,18 @@ def test_twice_failed_part_goes_terminal_and_is_not_repicked():
     events = []
     bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
     fails = {"n": 0}
+    block = load_block(F1)
+    # the depot slot the first part lives in — read from the block, not hardcoded, so a
+    # change to the depot layout does not silently turn this into a test of nothing
+    first_slot = block.orders[0].parts[0].depot_slot
+
     class Flaky(SimBackend):
         def pick(self, depot_slot):
-            # Fail only on first depot slot (BL1 = F1O1P1) twice, then succeed
-            if depot_slot == "BL1" and fails["n"] < 2:
+            # fail the first part's slot twice, then succeed
+            if depot_slot == first_slot and fails["n"] < 2:
                 fails["n"] += 1
                 raise RobotError("miss")
             return super().pick(depot_slot)
-    block = load_block(F1)
     bridge = RobotBridge(bus, Flaky(timing=FAST, rng=random.Random(0))); bridge.start()
     eng = TaskEngine(bus, block, rng=random.Random(0))
     ctrl = SupplyController(bus, bridge, block, SupplyProfile(lookahead=2)); ctrl.start()

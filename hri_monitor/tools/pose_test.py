@@ -36,7 +36,7 @@ def main() -> int:
     ap.add_argument("--slots", nargs="*", default=None)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--to", default="C", choices=["L", "C", "R"], help="staging slot to release on")
-    ap.add_argument("--pace", default="slow", choices=["slow", "normal"])
+    ap.add_argument("--pace", default="slow", choices=["slow", "normal", "fast"])
     ap.add_argument("--no-gripper", action="store_true", help="move only; never touch the jaws")
     ap.add_argument("--no-home", action="store_true", help="skip the initial home()")
     ap.add_argument("--settle", type=float, default=6.5,

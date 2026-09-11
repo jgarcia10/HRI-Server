@@ -236,8 +236,11 @@ def test_build_backend_shipped_config_is_tool_do():
     assert isinstance(backend.gripper, ToolDOGripper)
     assert backend.gripper.do == 0
     assert backend.gripper.close_high is True
-    assert load_mode("robot")["robot"]["gripper"] == {
-        "kind": "tool_do", "do": 0, "close_high": True, "settle_s": 5.0}
+    # No `settle_s` here: for tool_do the backend builds the gripper itself with settle_s=0
+    # and does the waiting in `_approach_and`, so a settle_s in this block would be silently
+    # ignored — worse, it reads like a second, real delay on top of gripper_settle_s.
+    assert load_mode("robot")["robot"]["gripper"] == {"kind": "tool_do", "do": 0, "close_high": True}
+    assert backend.gripper.settle_s == 0.0
 
 
 def test_build_backend_onrobot_modbus_gripper():

@@ -7,28 +7,28 @@ orders:
   - id: F2O1P1
     type: 1x2
     color: blue
-    depot_slot: BL1
+    depot_slot: BL2
     pos:
     - 0
     - 0
   - id: F2O1P2
     type: 1x2
     color: seafoam
-    depot_slot: SF1
+    depot_slot: SF3
     pos:
     - 0
     - 1
   - id: F2O1P3
     type: 1x1
     color: orange
-    depot_slot: OR1
+    depot_slot: OR3
     pos:
     - 1
     - 2
   - id: F2O1P4
     type: slope
     color: lime
-    depot_slot: LM1
+    depot_slot: LM3
     pos:
     - 0
     - 2
@@ -42,35 +42,35 @@ orders:
   - id: F2O2P1
     type: 1x2
     color: red
-    depot_slot: RD1
+    depot_slot: RD3
     pos:
     - 2
     - 0
   - id: F2O2P2
     type: 1x2
     color: blue
-    depot_slot: BL1
+    depot_slot: BL2
     pos:
     - 0
     - 0
   - id: F2O2P3
     type: 1x2
     color: seafoam
-    depot_slot: SF1
+    depot_slot: SF3
     pos:
     - 1
     - 1
   - id: F2O2P4
     type: 1x1
     color: lime
-    depot_slot: LM1
+    depot_slot: LM3
     pos:
     - 2
     - 2
   - id: F2O2P5
     type: slope
     color: blue
-    depot_slot: BL2
+    depot_slot: BL1
     pos:
     - 1
     - 2
@@ -84,28 +84,28 @@ orders:
   - id: F2O3P1
     type: 1x2
     color: seafoam
-    depot_slot: SF1
+    depot_slot: SF3
     pos:
     - 2
     - 0
   - id: F2O3P2
     type: 1x2
     color: lime
-    depot_slot: LM1
+    depot_slot: LM3
     pos:
     - 0
     - 0
   - id: F2O3P3
     type: 1x2
     color: red
-    depot_slot: RD1
+    depot_slot: RD3
     pos:
     - 1
     - 1
   - id: F2O3P4
     type: 1x1
     color: orange
-    depot_slot: OR1
+    depot_slot: OR3
     pos:
     - 2
     - 2
@@ -119,7 +119,7 @@ orders:
   - id: F2O3P6
     type: 1x2
     color: blue
-    depot_slot: BL1
+    depot_slot: BL2
     pos:
     - 1
     - 3
@@ -134,7 +134,7 @@ orders:
   - id: F2O3P8
     type: slope
     color: seafoam
-    depot_slot: SF3
+    depot_slot: SF1
     pos:
     - 0
     - 1
@@ -155,28 +155,28 @@ orders:
   - id: F2O4P1
     type: 1x2
     color: orange
-    depot_slot: OR1
+    depot_slot: OR3
     pos:
     - 1
     - 0
   - id: F2O4P2
     type: 1x1
     color: seafoam
-    depot_slot: SF1
+    depot_slot: SF3
     pos:
     - 0
     - 0
   - id: F2O4P3
     type: 1x2
     color: blue
-    depot_slot: BL1
+    depot_slot: BL2
     pos:
     - 0
     - 1
   - id: F2O4P4
     type: 1x1
     color: lime
-    depot_slot: LM1
+    depot_slot: LM3
     pos:
     - 2
     - 1
@@ -189,28 +189,28 @@ orders:
   - id: F2O5P1
     type: 1x2
     color: lime
-    depot_slot: LM1
+    depot_slot: LM3
     pos:
     - 0
     - 0
   - id: F2O5P2
     type: 1x2
     color: seafoam
-    depot_slot: SF1
+    depot_slot: SF3
     pos:
     - 2
     - 0
   - id: F2O5P3
     type: 1x2
     color: orange
-    depot_slot: OR1
+    depot_slot: OR3
     pos:
     - 1
     - 1
   - id: F2O5P4
     type: 1x1
     color: red
-    depot_slot: RD1
+    depot_slot: RD3
     pos:
     - 1
     - 2
@@ -224,7 +224,7 @@ orders:
   - id: F2O5P6
     type: 1x2
     color: blue
-    depot_slot: BL1
+    depot_slot: BL2
     pos:
     - 1
     - 3
@@ -239,7 +239,7 @@ orders:
   - id: F2O5P8
     type: slope
     color: lime
-    depot_slot: LM3
+    depot_slot: LM1
     pos:
     - 3
     - 1
@@ -260,35 +260,35 @@ orders:
   - id: F2O6P1
     type: 1x2
     color: seafoam
-    depot_slot: SF1
+    depot_slot: SF3
     pos:
     - 2
     - 0
   - id: F2O6P2
     type: 1x2
     color: lime
-    depot_slot: LM1
+    depot_slot: LM3
     pos:
     - 0
     - 0
   - id: F2O6P3
     type: 1x2
     color: blue
-    depot_slot: BL1
+    depot_slot: BL2
     pos:
     - 2
     - 1
   - id: F2O6P4
     type: 1x1
     color: red
-    depot_slot: RD1
+    depot_slot: RD3
     pos:
     - 1
     - 1
   - id: F2O6P5
     type: slope
     color: orange
-    depot_slot: OR1
+    depot_slot: OR3
     pos:
     - 0
     - 1
@@ -296,7 +296,7 @@ orders:
   - id: F2O6P6
     type: 1x1
     color: blue
-    depot_slot: BL2
+    depot_slot: BL1
     pos:
     - 3
     - 2

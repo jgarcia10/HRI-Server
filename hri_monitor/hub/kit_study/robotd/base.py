@@ -6,8 +6,9 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 
 STAGING_SLOTS = ("L", "C", "R")
-PACE_LEVELS = ("slow", "normal")
-PACE_FACTOR = {"slow": 1.6, "normal": 1.0}
+PACE_LEVELS = ("slow", "normal", "fast")
+# How long a simulated motion takes relative to `normal` (SimBackend only).
+PACE_FACTOR = {"slow": 1.6, "normal": 1.0, "fast": 0.6}
 _DEPOT_SLOT = re.compile(r"^[A-Z]{2}\d{1,2}$")   # RD1, OR3, BL12 …
 
 

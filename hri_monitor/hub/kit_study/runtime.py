@@ -107,6 +107,7 @@ def build_backend(mode_cfg: dict) -> RobotBackend:
         robot_ip = r.get("ip") or cal.get("robot_ip")
         gcfg = r.get("gripper") or {}
         return URBackend(robot_ip, cal,
+                         speeds=r.get("speeds"),
                          gripper_settle_s=float(r.get("gripper_settle_s", 1.0)),
                          gripper_open_settle_s=(float(r["gripper_open_settle_s"])
                                                 if "gripper_open_settle_s" in r else None),

@@ -47,9 +47,14 @@ class _IKCallFailed(RobotError):
 
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
+# Joint/linear speed and acceleration per pace level. Overridable from the mode config
+# (`robot.speeds`) so the cell can be tuned without a code change. `fast` is roughly a third
+# of the UR5's maximum joint speed (3.14 rad/s) — brisk next to a seated participant, with
+# acceleration kept well below the arm's limit so the motion still reads as deliberate.
 DEFAULT_SPEEDS = {
-    "normal": {"joint_v": 0.6, "joint_a": 0.8, "lin_v": 0.15, "lin_a": 0.5},
-    "slow":   {"joint_v": 0.3, "joint_a": 0.5, "lin_v": 0.08, "lin_a": 0.3},
+    "slow":   {"joint_v": 0.30, "joint_a": 0.50, "lin_v": 0.08, "lin_a": 0.30},
+    "normal": {"joint_v": 0.60, "joint_a": 0.80, "lin_v": 0.15, "lin_a": 0.50},
+    "fast":   {"joint_v": 1.10, "joint_a": 1.50, "lin_v": 0.30, "lin_a": 0.90},
 }
 
 # Verified fault-recovery sequence (measured 2026-09-11) for a gripper that latched a fault by
@@ -126,7 +131,9 @@ class URBackend(RobotBackend):
                  gripper_reset_reupload_settle_s: float = GRIPPER_RESET_REUPLOAD_SETTLE_S):
         self.ip = ip
         self.cal = calibration
-        self.speeds = speeds or DEFAULT_SPEEDS
+        # Merged per level, so a config that only retunes `fast` keeps the other two.
+        self.speeds = {lvl: {**vals, **(speeds or {}).get(lvl, {})}
+                       for lvl, vals in DEFAULT_SPEEDS.items()}
         # Closing starts from fully open (~110 mm) and the jaws travel the whole stroke in
         # ~7 s, so reaching a 32 mm brick needs ~6-8 s; opening only has to clear the brick,
         # which is a second or two. One wait for each, so releasing does not cost a close.

@@ -61,6 +61,27 @@ def load_block(path: str | Path) -> BlockSpec:
     return BlockSpec(family=str(raw["family"]), orders=orders)
 
 
+def _check_far_to_near(order_id: str, parts: list[PartSpec]) -> None:
+    """Within a depot column, parts must be consumed from the far row to the near one.
+
+    The staging mat sits *beyond* the depot as seen from the robot, so the arm carrying a
+    brick to the mat travels outwards over the rows in front of the slot it just emptied.
+    Taking the near brick first means crossing over bricks that are still there and nudging
+    them out of their pockets (observed in the lab, 2026-09-11). Emptying the far row first
+    leaves that path clear, so each column's slot numbers must strictly decrease along the
+    assembly sequence — slot 1 is the row nearest the robot, 3 the farthest.
+    """
+    last: dict[str, int] = {}
+    for p in parts:
+        col, num = p.depot_slot[:2], int(p.depot_slot[2:])
+        if col in last and num >= last[col]:
+            raise ValueError(
+                f"{order_id}: {p.id} takes {p.depot_slot} after {col}{last[col]} — a column "
+                "must be emptied from the far row to the near one, so its slot numbers have "
+                "to decrease along the sequence")
+        last[col] = num
+
+
 def _parse_order(o: dict) -> OrderSpec:
     kind = o["kind"]
     parts = []
@@ -86,6 +107,7 @@ def _parse_order(o: dict) -> OrderSpec:
         vals = [getattr(p, "id" if field == "id" else "depot_slot") for p in parts]
         if len(set(vals)) != len(vals):
             raise ValueError(f"{o['id']}: duplicate part {field}")
+    _check_far_to_near(o["id"], parts)
     limit = o.get("time_limit_s")
     if kind in _TIMED_KINDS and not limit:
         raise ValueError(f"{o['id']}: {kind} order requires time_limit_s")

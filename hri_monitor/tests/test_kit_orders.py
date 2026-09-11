@@ -40,3 +40,27 @@ def test_rush_requires_time_limit(tmp_path):
     bad.write_text(yaml.safe_dump(data))
     with pytest.raises(ValueError, match="time_limit_s"):
         load_block(bad)
+
+
+@pytest.mark.parametrize("path", [F1, Path("hub/kit_study/configs/orders_f2.yaml")])
+def test_every_column_is_emptied_from_the_far_row_inwards(path):
+    """The mat is beyond the depot, so carrying a brick out crosses the rows in front of the
+    slot just emptied. Taking the near brick first nudges the ones still there out of their
+    pockets, so each colour column has to be consumed far row first."""
+    for order in load_block(path).orders:
+        last = {}
+        for p in order.parts:
+            col, num = p.depot_slot[:2], int(p.depot_slot[2:])
+            assert num < last.get(col, 99), f"{order.id}/{p.id} takes {p.depot_slot} too late"
+            last[col] = num
+
+
+def test_near_before_far_is_rejected(tmp_path):
+    data = yaml.safe_load(F1.read_text())
+    parts = data["orders"][2]["parts"]
+    red = [p for p in parts if p["color"] == "red"]
+    red[0]["depot_slot"], red[1]["depot_slot"] = red[1]["depot_slot"], red[0]["depot_slot"]
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match="far row to the near one"):
+        load_block(bad)

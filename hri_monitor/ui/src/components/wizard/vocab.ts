@@ -100,7 +100,7 @@ export const familyWord = (family: string | undefined): string =>
 /* ----------------------------------------------------------- robot & speed */
 
 export const paceWord = (pace: string | undefined): string =>
-  pace === "slow" ? "Slow" : pace === "normal" ? "Normal" : (pace ?? "—");
+  pace === "slow" ? "Slow" : pace === "normal" ? "Normal" : pace === "fast" ? "Fast" : (pace ?? "—");
 
 export const backendWord = (backend: string | undefined): string =>
   backend === "sim"

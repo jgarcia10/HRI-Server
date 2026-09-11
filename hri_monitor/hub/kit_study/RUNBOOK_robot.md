@@ -172,6 +172,14 @@ robot` refuses this shortcut (see section C.4).
     (`home transit L C R` plus every depot slot named across `orders_f1.yaml` and
     `orders_f2.yaml`, verified with `grep -h depot_slot hub/kit_study/configs/orders_f*.yaml`: RD1-3, OR1-3,
     BL1-2, SF1-3, LM1-3.) Grasp pose = jaws around the brick below the stud, gripper open.
+
+    **Loading the depot: fill the far row first.** Slot 1 is the row nearest the robot, 3 the
+    farthest. The staging mat sits beyond the depot, so the arm carrying a brick out to the mat
+    travels over the rows in front of the slot it just emptied — taking a near brick while far
+    ones are still there nudges them out of their pockets (seen in the lab, 2026-09-11). Every
+    order therefore consumes each colour column from 3 down to 1, and `orders.py` refuses to
+    load a block that does not. A four-piece order uses only the far row, so load the pieces
+    the order lists and leave the near rows empty.
  5. Bench (spec M4 exit): `run.py --mode robot`; from the wizard: Home, then start a block with
     a team member placing parts; log ≥ 40 supply cycles; require ≥95% success, cycle ≤ 5 s p95
     (`robot.<skill>_duration_s`, e.g. `robot.supply_duration_s`, in the CSV).
