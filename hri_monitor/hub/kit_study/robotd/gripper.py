@@ -1,10 +1,14 @@
 """Gripper actuators for the UR backend.
 
-The OnRobot RG2 v2 on the study's CB3 controller can be driven three ways:
+The OnRobot RG2 v2 on the study's CB3 controller can be driven several ways:
 
-* :class:`ToolDOGripper` — toggling UR tool digital output 0 (legacy ``SetIO(fun=1, pin=16)``).
-  This is what URBackend has always done, but on a CB3 it only works when the OnRobot URCap is
-  connected to the Compute Box and configured for digital-I/O control.
+* :class:`DualDOGripper` — the lab's actual wiring, measured on site 2026-09-10/11: two tool
+  digital outputs are the two directions of an H-bridge internal to the gripper (DO0 = close,
+  DO1 = open), (1, 1) latches a gripper fault, (0, 0) is neutral. This is what `robot.yaml`
+  ships and what `URBackend` uses by default.
+* :class:`ToolDOGripper` — a single tool digital output, legacy ``SetIO(fun=1, pin=16)``
+  wiring/URCap behaviour (one line, polarity selects open/close). Kept for the URCap-managed
+  digital-I/O mode and for `ursim.yaml`.
 * :class:`OnRobotModbusGripper` — talking Modbus TCP directly to the OnRobot Compute Box
   (port 502, unit id 65). This works regardless of URCap wiring and is the fallback while the
   URCap↔box link is not set up in the lab.
@@ -13,7 +17,7 @@ The OnRobot RG2 v2 on the study's CB3 controller can be driven three ways:
   once the URCap is (re)installed: the URCap daemon only answers XML-RPC calls from URScript
   running *on the controller*, so nothing on the network can reach it directly.
 
-All three implement the small :class:`Gripper` protocol so `URBackend` never has to know which
+All four implement the small :class:`Gripper` protocol so `URBackend` never has to know which
 one it holds.
 """
 from __future__ import annotations
@@ -132,6 +136,139 @@ class ToolDOGripper(Gripper):
 
     def grip_detected(self) -> bool | None:
         return None   # tool DO carries no grip-detect feedback
+
+
+class DualDOGripper(Gripper):
+    """Drives the OnRobot RG2 v2 as a two-line digital gripper on the UR tool connector.
+
+    Measured on site 2026-09-10/11 with the tool output "controlled by user", 24 V: DO0 closes,
+    DO1 opens — the two directions of an H-bridge *inside* the gripper. (0, 0) is neutral (the
+    gripper holds position, nothing moves); (1, 1) is FORBIDDEN — it latches a gripper fault
+    that survives a power cycle (recovered only by a full controller reboot on 2026-09-10).
+
+    Every direction change is therefore break-before-make: drop the line that must not be high
+    first, wait `BREAK_GAP_S`, then raise the line that must be high — so the forbidden (1, 1)
+    state is structurally impossible to reach, even transiently, no matter what order `close()`/
+    `open()`/`connect()`/`disconnect()` are called in. `connect()`/`disconnect()` always leave
+    both lines low, so a reconnect or a controller reboot never leaves a direction asserted.
+
+    `io_getter` follows the `ToolDOGripper` pattern: a callable returning the *current* RTDE IO
+    interface (not the interface itself), so a `URBackend` reconnect — which replaces `self.io`
+    — keeps working without rebuilding the gripper. `recv_getter`, if given, is a callable
+    returning the RTDE *receive* interface, used only by `status()`.
+    """
+
+    name = "dual_do"
+
+    BREAK_GAP_S = 0.15    # dwell between dropping the unwanted line and raising the wanted one
+    FAULT_AI1_V = 5.0     # measured: AI1 ~1.35 V ready, ~3.4 V moving, ~6.4 V FAULT
+
+    # ur_rtde 1.6.5's RTDEReceiveInterface has no tool-analog getter at all (only
+    # getStandardAnalogInput0/1, which read the *controller's* standard AI, not the tool
+    # connector's AI0/AI1 the measured ready/moving/fault signatures are about) — these tuples
+    # are here so status() picks one up automatically the day a build exposes it, without code
+    # changes; until then `_pick(recv, ...)` finds nothing and status() returns None.
+    _AI1_GETTERS = ("getToolAnalogInput1", "getActualToolAnalogInput1")
+    _CURRENT_GETTERS = ("getToolCurrent", "getActualToolCurrent")
+
+    def __init__(self, io_getter, close_do: int = 0, open_do: int = 1, settle_s: float = 1.0,
+                 hold_close: bool = True, sleep=time.sleep, recv_getter=None):
+        if int(close_do) == int(open_do):
+            raise RobotError("DualDOGripper: close_do and open_do must be different lines")
+        self._io_getter = io_getter
+        self._recv_getter = recv_getter
+        self.close_do = int(close_do)
+        self.open_do = int(open_do)
+        self.settle_s = float(settle_s)
+        self.hold_close = bool(hold_close)
+        self._sleep = sleep
+        self._closed: bool | None = None
+
+    # --------------------------------------------------------- low-level: break-before-make
+    def _write(self, do: int, level: bool) -> None:
+        io = self._io_getter()
+        if not io.setToolDigitalOut(do, level):
+            raise RobotError("gripper command refused")
+
+    def _drive(self, direction: str | None) -> None:
+        """Move to `direction` ("close" | "open" | None == neutral).
+
+        Structurally cannot assert both lines high, even transiently: it always writes every
+        line that must end up low *first*, waits `BREAK_GAP_S`, and only then writes the (at
+        most one) line that must end up high.
+        """
+        want_close = direction == "close"
+        want_open = direction == "open"
+        if want_close and want_open:
+            raise RobotError("DualDOGripper: close and open requested at once")   # unreachable
+        # Break: drop whichever line(s) must not be high.
+        if not want_close:
+            self._write(self.close_do, False)
+        if not want_open:
+            self._write(self.open_do, False)
+        self._sleep(self.BREAK_GAP_S)
+        # Make: raise the one line that was requested, if any.
+        if want_close:
+            self._write(self.close_do, True)
+        if want_open:
+            self._write(self.open_do, True)
+
+    def _neutral(self) -> None:
+        self._drive(None)
+
+    # -------------------------------------------------------------------------- lifecycle
+    def connect(self) -> None:
+        self._neutral()   # a reconnect (or a controller reboot) must never inherit an asserted line
+
+    def disconnect(self) -> None:
+        try:
+            self._neutral()
+        except (RobotError, OSError):
+            pass   # best-effort: disconnect must not raise
+
+    # -------------------------------------------------------------------------- actuator
+    def close(self) -> None:
+        self._drive("close")
+        if self.settle_s:
+            self._sleep(self.settle_s)
+        if self.hold_close:
+            pass   # keep the close line asserted — the grip must hold while the arm carries the part
+        else:
+            self._neutral()
+        self._closed = True
+
+    def open(self) -> None:
+        self._drive("open")
+        if self.settle_s:
+            self._sleep(self.settle_s)
+        self._neutral()   # never hold against the open end stop
+        self._closed = False
+
+    def is_closed(self) -> bool | None:
+        return self._closed
+
+    def grip_detected(self) -> bool | None:
+        return None   # no grip-detect feedback on a two-line digital gripper
+
+    # ---------------------------------------------------------------------------- feedback
+    @staticmethod
+    def _pick(obj, names):
+        return next((getattr(obj, n) for n in names if hasattr(obj, n)), None)
+
+    def status(self) -> dict | None:
+        """{"ai1": V, "current": A, "fault": AI1 > FAULT_AI1_V}, or None if `recv_getter` was
+        not given, or if this ur_rtde build exposes no tool-analog getter (see `_AI1_GETTERS`).
+        Never raises for a missing getter — the class does not depend on this working."""
+        if self._recv_getter is None:
+            return None
+        recv = self._recv_getter()
+        ai1_getter = self._pick(recv, self._AI1_GETTERS)
+        if ai1_getter is None:
+            return None
+        ai1 = float(ai1_getter())
+        current_getter = self._pick(recv, self._CURRENT_GETTERS)
+        current = float(current_getter()) if current_getter is not None else None
+        return {"ai1": ai1, "current": current, "fault": ai1 > self.FAULT_AI1_V}
 
 
 class OnRobotModbusGripper(Gripper):

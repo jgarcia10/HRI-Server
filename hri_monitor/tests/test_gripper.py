@@ -8,9 +8,11 @@ import struct
 import pytest
 
 from hub.kit_study.robotd.base import RobotError
-from hub.kit_study.robotd.gripper import (OnRobotModbusGripper, OnRobotURCapGripper,
-                                          ToolDOGripper, encode_robot_message)
+from hub.kit_study.robotd.gripper import (DualDOGripper, OnRobotModbusGripper,
+                                          OnRobotURCapGripper, ToolDOGripper,
+                                          encode_robot_message)
 from hub.kit_study.robotd.ur import URBackend
+from hub.kit_study.runtime import build_gripper
 from tests.test_robotd_ur import CAL, FakeControl, FakeIO, FakeReceive, FakeRobot
 
 
@@ -201,6 +203,152 @@ def test_tool_do_gripper_false_return_raises_robot_error():
     with pytest.raises(RobotError, match="gripper command refused"):
         g.close()
     assert g.is_closed() is False   # unchanged on failure
+
+
+# -------------------------------------------------------------------------- DualDOGripper
+def _replay_never_both_high(calls, close_do, open_do) -> bool:
+    """Replay a recorded (do, level) write log into a simulated pin-state and assert the
+    forbidden (1, 1) combination is never reached at any point in the sequence."""
+    state = {}
+    for do, level in calls:
+        state[do] = level
+        if state.get(close_do) and state.get(open_do):
+            return False
+    return True
+
+
+def make_dual(io=None, **kw):
+    io = io if io is not None else FakeIO()
+    kw.setdefault("settle_s", 0.0)
+    kw.setdefault("sleep", lambda s: None)
+    g = DualDOGripper(io_getter=lambda: io, **kw)
+    return g, io
+
+
+class FakeReceiveWithToolAI1:
+    """Stand-in for a hypothetical ur_rtde build that *does* expose a tool-analog getter —
+    this repo's actual ur_rtde 1.6.5 does not (see test_status_none_on_this_ur_rtde_build)."""
+
+    def __init__(self, ai1: float, current: float | None = None):
+        self._ai1 = ai1
+        self._current = current
+
+    def getToolAnalogInput1(self):
+        return self._ai1
+
+    def getToolCurrent(self):
+        return self._current
+
+
+def test_dual_do_close_writes_open_low_before_close_high_never_both_high():
+    g, io = make_dual()
+    g.close()
+    assert io.calls == [(1, False), (0, True)]
+    assert _replay_never_both_high(io.calls, close_do=0, open_do=1)
+
+
+def test_dual_do_open_writes_close_low_before_open_high_then_ends_neutral():
+    g, io = make_dual()
+    g.open()
+    assert io.calls == [(0, False), (1, True), (0, False), (1, False)]
+    assert _replay_never_both_high(io.calls, close_do=0, open_do=1)
+    assert g.is_closed() is False
+
+
+def test_dual_do_close_hold_close_true_leaves_close_line_high():
+    g, io = make_dual(hold_close=True)
+    g.close()
+    assert io.calls == [(1, False), (0, True)]     # ends with close_do high — nothing after it
+    assert g.is_closed() is True
+
+
+def test_dual_do_close_hold_close_false_ends_neutral():
+    g, io = make_dual(hold_close=False)
+    g.close()
+    assert io.calls == [(1, False), (0, True), (0, False), (1, False)]
+    assert g.is_closed() is True
+
+
+def test_dual_do_connect_and_disconnect_force_neutral():
+    g, io = make_dual()
+    g.connect()
+    assert io.calls == [(0, False), (1, False)]
+    io.calls.clear()
+    g.disconnect()
+    assert io.calls == [(0, False), (1, False)]
+
+
+def test_dual_do_disconnect_swallows_io_errors():
+    io = FakeIO()
+    io.setToolDigitalOut = lambda out_id, level: (_ for _ in ()).throw(OSError("bus reset"))
+    g, _ = make_dual(io=io)
+    g.disconnect()   # must not raise
+
+
+def test_dual_do_close_open_close_sequence_never_asserts_both_high():
+    g, io = make_dual()
+    g.connect()
+    g.close()
+    g.open()
+    g.close()
+    assert _replay_never_both_high(io.calls, close_do=g.close_do, open_do=g.open_do)
+
+
+def test_dual_do_custom_lines_are_respected():
+    g, io = make_dual(close_do=4, open_do=5)
+    g.close()
+    assert io.calls == [(5, False), (4, True)]
+
+
+def test_dual_do_close_do_equal_open_do_raises():
+    with pytest.raises(RobotError, match="different"):
+        DualDOGripper(io_getter=lambda: None, close_do=0, open_do=0)
+
+
+def test_dual_do_status_none_without_recv_getter():
+    g, _ = make_dual()
+    assert g.status() is None
+
+
+def test_dual_do_status_none_on_this_ur_rtde_build():
+    """Pins the finding for this repo's actual ur_rtde (1.6.5): RTDEReceiveInterface has no
+    tool-analog getter at all (only getStandardAnalogInput0/1, the controller's own standard
+    AI, not the tool connector's), so status() must degrade to None rather than raise or
+    silently read the wrong signal."""
+    class BareReceive:
+        def getStandardAnalogInput1(self):
+            return 1.35   # exists on this build, but is NOT the tool AI1 — must not be used
+    g, _ = make_dual(recv_getter=lambda: BareReceive())
+    assert g.status() is None
+
+
+def test_dual_do_status_reads_ai1_current_and_flags_fault():
+    g, _ = make_dual(recv_getter=lambda: FakeReceiveWithToolAI1(ai1=1.35, current=0.085))
+    assert g.status() == {"ai1": 1.35, "current": 0.085, "fault": False}
+
+    g2, _ = make_dual(recv_getter=lambda: FakeReceiveWithToolAI1(ai1=6.4, current=0.065))
+    st = g2.status()
+    assert st["ai1"] == 6.4 and st["current"] == 0.065 and st["fault"] is True
+
+
+# ---------------------------------------------------------- URBackend + dual_do factory wiring
+def test_urbackend_binds_dual_do_factory_to_its_own_reconnectable_io():
+    """runtime.build_gripper('dual_do') returns a factory, not a built instance — URBackend
+    must call it with io_getter/recv_getter bound to itself, the same pattern ToolDOGripper
+    uses, so a reconnect (which replaces self.io) keeps working without rebuilding the gripper."""
+    robot = FakeRobot()
+    c, r, io = FakeControl(robot), FakeReceive(robot), FakeIO()
+    factory = build_gripper({"kind": "dual_do", "close_do": 0, "open_do": 1, "settle_s": 0.0,
+                              "hold_close": True})
+    b = URBackend("192.168.131.140", CAL, rtde_factory=lambda ip: (c, r, io), gripper=factory,
+                  gripper_settle_s=0.0, poll_s=0.0)
+    b.connect()
+    assert isinstance(b.gripper, DualDOGripper)
+    assert b.gripper.hold_close is True
+    assert b.gripper._io_getter() is b.io
+    io.calls.clear()
+    b.pick("RD1")
+    assert io.calls == [(1, False), (0, True)]   # close, held (gripper settle_s=0 -> no extra sleep)
 
 
 # ------------------------------------------------------------------ URBackend + fake gripper

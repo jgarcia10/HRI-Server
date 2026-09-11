@@ -191,13 +191,43 @@ def test_build_backend_default_gripper_is_tool_do():
 
 
 def test_build_backend_tool_do_polarity_from_config():
-    """robot.gripper.close_high: false (the lab RG2 v2) reaches the default ToolDOGripper;
-    the shipped robot.yaml carries exactly that setting."""
+    """robot.gripper.close_high: false (single-DO wiring) still reaches the default
+    ToolDOGripper — kept for ursim/URCap-managed digital I/O; the lab's own robot.yaml has
+    moved on to `kind: dual_do` (see test_build_backend_dual_do_gripper_from_shipped_config)."""
     from hub.kit_study.robotd.gripper import ToolDOGripper
     cfg = load_mode("ursim", overrides={"robot": {"gripper": {"kind": "tool_do", "close_high": False}}})
     backend = build_backend(cfg)
     assert isinstance(backend.gripper, ToolDOGripper) and backend.gripper.close_high is False
-    assert load_mode("robot")["robot"]["gripper"] == {"kind": "tool_do", "close_high": False}
+
+
+def test_build_backend_dual_do_gripper_from_config():
+    from hub.kit_study.robotd.gripper import DualDOGripper
+    cfg = load_mode("ursim", overrides={"robot": {
+        "gripper": {"kind": "dual_do", "close_do": 2, "open_do": 3, "settle_s": 0.5,
+                    "hold_close": False}}})
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, DualDOGripper)
+    assert backend.gripper.close_do == 2
+    assert backend.gripper.open_do == 3
+    assert backend.gripper.settle_s == 0.5
+    assert backend.gripper.hold_close is False
+    # bound to the backend's own (reconnect-replaceable) IO interface, per the ToolDOGripper pattern
+    assert backend.gripper._io_getter() is backend.io
+
+
+def test_build_backend_dual_do_gripper_from_shipped_config():
+    """The shipped robot.yaml now uses kind: dual_do — DO0 closes, DO1 opens, matching the
+    measured lab wiring — with sane defaults."""
+    from hub.kit_study.robotd.gripper import DualDOGripper
+    cfg = load_mode("ursim", overrides={"robot": {
+        "gripper": load_mode("robot")["robot"]["gripper"]}})
+    backend = build_backend(cfg)
+    assert isinstance(backend.gripper, DualDOGripper)
+    assert backend.gripper.close_do == 0
+    assert backend.gripper.open_do == 1
+    assert backend.gripper.hold_close is True
+    assert load_mode("robot")["robot"]["gripper"] == {
+        "kind": "dual_do", "close_do": 0, "open_do": 1, "settle_s": 1.0, "hold_close": True}
 
 
 def test_build_backend_onrobot_modbus_gripper():

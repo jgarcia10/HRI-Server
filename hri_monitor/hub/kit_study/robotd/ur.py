@@ -24,6 +24,7 @@ import math
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
@@ -81,7 +82,7 @@ class URBackend(RobotBackend):
 
     def __init__(self, ip: str, calibration: dict, speeds: dict | None = None,
                  gripper_settle_s: float = 1.0, rtde_factory=None,
-                 gripper: Gripper | None = None, gripper_close_high: bool = True,
+                 gripper: Gripper | Callable | None = None, gripper_close_high: bool = True,
                  poll_s: float = POLL_S, move_timeout_s: float = MOVE_TIMEOUT_S,
                  stop_timeout_s: float = STOP_TIMEOUT_S, reach_grace_s: float = REACH_GRACE_S,
                  clock=time.monotonic):
@@ -93,8 +94,19 @@ class URBackend(RobotBackend):
         # `settle_s=0.0`: URBackend does its own *interruptible* settle wait (see
         # _approach_and/open_gripper) so the default gripper must not sleep twice.
         # `gripper_close_high=False`: the lab RG2 v2 closes on DO0 = 0 and opens on DO0 = 1.
-        self.gripper = gripper or ToolDOGripper(io_getter=lambda: self.io, do=GRIPPER_TOOL_DO,
-                                                 settle_s=0.0, close_high=gripper_close_high)
+        #
+        # `gripper` is either a ready Gripper instance (the common case — onrobot_modbus/
+        # onrobot_urcap are self-contained network clients, and tests pass fakes), a *factory*
+        # callable(io_getter, recv_getter=None) -> Gripper for the kinds that must bind to this
+        # backend's own (reconnect-replaceable) RTDE interfaces — `runtime.build_gripper` hands
+        # back one of those for `kind: dual_do` — or None, meaning "build the legacy default".
+        if gripper is None:
+            self.gripper = ToolDOGripper(io_getter=lambda: self.io, do=GRIPPER_TOOL_DO,
+                                          settle_s=0.0, close_high=gripper_close_high)
+        elif callable(gripper):
+            self.gripper = gripper(lambda: self.io, recv_getter=lambda: self.recv)
+        else:
+            self.gripper = gripper
         self.poll_s = float(poll_s)
         self.move_timeout_s = float(move_timeout_s)
         self.stop_timeout_s = float(stop_timeout_s)

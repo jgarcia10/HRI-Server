@@ -41,11 +41,18 @@ def resolve_calibration_path(mode_cfg: dict) -> Path:
 
 
 def build_gripper(gripper_cfg: dict | None, robot_ip: str | None = None):
-    """robot.gripper config -> a Gripper instance, or None to let URBackend build its own
-    default ToolDOGripper (bound to the backend's own RTDE IO interface, so reconnects work).
+    """robot.gripper config -> a Gripper instance, a *factory* for `URBackend` to bind to its
+    own RTDE interfaces, or None to let `URBackend` build its own default ToolDOGripper (bound
+    to the backend's own RTDE IO interface, so reconnects work).
 
     `kind: tool_do` (default) — UR tool digital output 0; needs the OnRobot URCap connected to
     the Compute Box and configured for digital I/O control.
+    `kind: dual_do` — the lab's actual wiring (measured 2026-09-10/11): two tool digital outputs
+    are the two directions of an H-bridge inside the gripper (`close_do`/`open_do`, default 0/1).
+    Like `tool_do` this must bind to the backend's own (reconnect-replaceable) RTDE IO/receive
+    interfaces, so this returns a *factory* `callable(io_getter, recv_getter=None) -> Gripper`
+    rather than a built instance — `URBackend.__init__` calls it with its own getters. Optional
+    `settle_s`/`hold_close` override the `DualDOGripper` defaults.
     `kind: onrobot_modbus` — direct Modbus TCP to the OnRobot Compute Box; works regardless of
     URCap wiring. Requires `ip`; `port`/`unit_id`/`force_n`/`open_width_mm`/`close_width_mm`/
     `settle_s` are optional overrides.
@@ -58,6 +65,13 @@ def build_gripper(gripper_cfg: dict | None, robot_ip: str | None = None):
     kind = cfg.get("kind", "tool_do")
     if kind == "tool_do":
         return None
+    if kind == "dual_do":
+        from .robotd.gripper import DualDOGripper
+        kwargs = {k: cfg[k] for k in ("close_do", "open_do", "settle_s", "hold_close") if k in cfg}
+
+        def factory(io_getter, recv_getter=None):
+            return DualDOGripper(io_getter, recv_getter=recv_getter, **kwargs)
+        return factory
     if kind == "onrobot_modbus":
         from .robotd.gripper import OnRobotModbusGripper
         kwargs = {k: cfg[k] for k in

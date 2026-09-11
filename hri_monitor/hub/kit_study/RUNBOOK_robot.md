@@ -83,70 +83,68 @@ robot` refuses this shortcut (see section C.4).
  2. PolyScope: check version (RTDE needs ≥3.7); safety config = reduced mode + planes around
     the shared mat; e-Series → Remote Control ON. Both E-stops within reach.
  3. Gripper: **OnRobot RG2 v2, wired straight to the tool connector of the CB3** (no Compute
-    Box in the lab). **Working setup (verified on site 2026-09-10):** on the pendant,
-    *Installation → I/O*, set the **tool output to "controlled by user"** (not "by OnRobot"),
-    tool output voltage 24 V, then **save the installation** (File → Save) so it survives a
-    reboot. In that mode the gripper follows **tool digital output 0 directly: DO0 = 1 OPENS,
-    DO0 = 0 CLOSES** (the output the 2024 installation had named "close"). That is what the
-    app ships in `configs/mode/robot.yaml`:
-
-            robot:
-              gripper: {kind: tool_do, close_high: false}
-
-    `close_high: false` is the polarity above; the generic default (`true`, DO0 = 1 closes)
-    is what `ursim.yaml` uses. Nothing else on the robot may drive the tool outputs while the
-    app runs — in particular do **not** enable "Tool Output controlled by OnRobot": the OnRobot
-    URCap daemon then takes over DO0/DO1 as its own communication lines and the app's commands
-    are ignored (and, as of 2026-09-10, that daemon never detected the gripper anyway —
+    Box in the lab), as **two tool digital outputs — the two directions of an H-bridge inside
+    the gripper** (measured on site 2026-09-10/11). On the pendant, *Installation → I/O*, tool
+    output **"controlled by user"** (not "by OnRobot"), 24 V, then *File → Save*. Nothing else
+    may drive the tool outputs while the app runs — do **not** enable "controlled by OnRobot":
+    the URCap daemon then takes DO0/DO1 as its own comm lines and the app's commands are
+    ignored (and, as of 2026-09-10, that daemon never detected the gripper anyway —
     "Tool connector – Empty" — even after a URCap reinstall and a full reboot).
 
+    | DO1 (open) | DO0 (close) | meaning |
+    |---|---|---|
+    | 0 | 0 | **neutral** — holds position, nothing moves |
+    | 0 | 1 | closes |
+    | 1 | 0 | opens |
+    | 1 | 1 | **FORBIDDEN** — latches a gripper fault that survives a power cycle |
+
+    Feedback on the tool analog inputs: **AI1 ≈ 1.35 V = ready, ≈ 3.4 V = moving, ≈ 6.4 V =
+    FAULT**; tool current ≈ 85 mA idle, 126–148 mA while the motor runs, and it *drops* to
+    63–69 mA in the fault state (not a spike — low current in that state means the motor isn't
+    being driven). AI0 ≈ 10 V when healthy and idle.
+
+    The app drives this with `DualDOGripper` (`hub/kit_study/robotd/gripper.py`), which makes
+    (1, 1) structurally impossible: every direction change breaks (drops the line that must go
+    low) before it makes (raises the wanted line), with a ~150 ms gap between the two writes,
+    and `connect()`/`disconnect()` always force both lines low. It holds the close line while
+    the arm carries a part and never holds against the open end stop. That is what the app
+    ships in `configs/mode/robot.yaml`:
+
+            robot:
+              gripper: {kind: dual_do, close_do: 0, open_do: 1, settle_s: 1.0, hold_close: true}
+
+    `ursim.yaml` still uses the older single-line `kind: tool_do` (no real gripper to fault).
     Two alternative actuators exist in `hub/kit_study/robotd/gripper.py`, selectable with
     `robot.gripper.kind`, for the day the OnRobot software path works: **`onrobot_urcap`**
     runs the URCap-generated `rg_grip(width, force)` program on the controller (archived
     template `robotd/onrobot/rg_grip_urcap_5.15.0.script`; gives width control and grip
     detection; needs *Installation → OnRobot Setup* to show the RG2) and **`onrobot_modbus`**
-    for a Compute Box (Modbus TCP :502, unit 65). Both are tested with fakes only.
+    for a Compute Box (Modbus TCP :502, unit 65). All are tested with fakes only.
 
-    **Gripper recovery protocol** (RG2 v2 stops answering — verified sequence, 2026-09-10).
-    The gripper has three observable states on the tool connector, visible live with
-    `.venv/bin/python tools/gripper_check.py --watch` (read-only, 1 Hz):
+    **Fault recovery** (RG2 v2 stops answering, or AI1 reads ≈ 6.4 V / current drops to
+    63–69 mA — verified sequence, 2026-09-10):
+    1. Both lines low immediately — do not command anything else while diagnosing. Stop every
+       program on the robot (pendant ■, no `run.py --mode robot` running).
+    2. Controller **power off** (☰ → Shutdown Robot), then back on. This is the only thing that
+       was observed to clear the latched fault on 2026-09-10 — dropping both lines alone did
+       not. Never cut tool voltage from software (`set_tool_voltage(0)`); the app never does.
+    3. From the laptop: `.venv/bin/python tools/gripper_check.py --matrix` — cycles all four
+       DO combinations except (1,1) and prints the tool current spread; a ✔ verdict means the
+       control lines reach the gripper and it's back to READY. Then `run.py --mode robot` works
+       unchanged (`gripper: {kind: dual_do, ...}`).
 
-      | state | signature (24 V tool output) | what to do |
-      |---|---|---|
-      | READY | AI0 ≈ 10 V, DI1 high, ~85 mA | DO0 works: 1 opens, 0 closes |
-      | UNINITIALISED | AI0/AI1 ≈ 0.07 V, ~81 mA, DI quiet | needs the OnRobot init once (step 5) |
-      | alive, no handshake | AI0 ≈ 7–8 V, DI bits toggling by themselves | link problem → steps 1–4 |
-
-    1. Stop every program on the robot (pendant ■, no `run.py --mode robot` running). Never cut
-       the tool voltage from software (`set_tool_voltage(0)` resets the gripper into
-       UNINITIALISED); the app never does.
-    2. Power the controller **off** (☰ → Shutdown Robot). With it off: unlock the Quick Changer,
-       pull the gripper off, inspect/clean the pogo pins (isopropyl), re-seat it and lock the
-       lever until it clicks; check the short QC→M8 cable is screwed tight at both ends. Wait 20 s.
-    3. Power on. Load the installation the 2024 gripper program used: *Setup Robot → Load
-       installation → `default`* (tool output 24 V there; `default_1` has 0 V — never use it).
-       The pendant header must read INSTALLATION `default`.
-    4. *Installation → OnRobot Setup*: "Tool connector" must list **RG2** (not *Empty*). If Empty:
-       rescan/refresh if the page has it, wait 30 s, repeat step 2 once. Still Empty → the
-       QC↔gripper link is physically broken; stop here (OnRobot support).
-    5. Init once: *Installation → I/O* → tool output **"controlled by OnRobot"** → the gripper
-       **closes** (`--watch` shows READY) → back to **"controlled by user"** → *File → Save*
-       (installation `default`).
-    6. From the laptop: `.venv/bin/python tools/gripper_check.py` → must print the ✔ VERDICT
-       (writes only DO0, leaves it open). Then `run.py --mode robot` works unchanged
-       (`gripper: {kind: tool_do, close_high: false}`).
-    Rule for every lab day: steps 3 → 5 → 6 after powering the robot on — READY does not survive
-    a loss of tool power.
-
-    **Bench check**: `.venv/bin/python tools/gripper_test.py cycle --close-low` (open → close →
-    open through tool DO0 with the lab polarity; `open|close|state` likewise); add `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive the Compute Box
-    directly, or `--urcap [IP]` (defaults to the lab robot IP) to drive `rg_grip(...)` through
-    the URCap exactly as the app does — `cycle --urcap` prints every RobotMessage it captured,
-    which is the fastest way to confirm the URCap reinstall took (no more "Missing URCap") and
-    that `rg_grip` completes cleanly. With the robot idle, confirm it opens, then confirm it
-    closes on a brick without crushing it (adjust the OnRobot force/width preset — in its own UI
-    for `tool_do`, or via `force_n`/`close_width_mm` in the mode file for `onrobot_modbus` /
-    `onrobot_urcap`).
+    **Bench check**: `.venv/bin/python tools/gripper_test.py cycle` (open → close → open
+    through the two-line driver, printing tool current + AI1 before/after each step so you can
+    read ready/moving/fault straight off the terminal; `open|close|state` likewise). Add
+    `--modbus IP` (e.g. `--modbus 192.168.1.1`) to drive a Compute Box directly, or `--urcap
+    [IP]` (defaults to the lab robot IP) to drive `rg_grip(...)` through the URCap exactly as
+    the app would — `cycle --urcap` prints every RobotMessage it captured, the fastest way to
+    confirm a URCap reinstall took (no more "Missing URCap") and that `rg_grip` completes
+    cleanly. The old single-line path is still available for a differently-wired gripper via
+    `--single-do [--close-low]`. With the robot idle, confirm it opens, then confirm it closes
+    on a brick without crushing it (adjust the OnRobot force/width preset — in its own UI for
+    `dual_do`/`tool_do`, or via `force_n`/`close_width_mm` in the mode file for `onrobot_modbus`
+    / `onrobot_urcap`).
 
     **Network note**: the CB3 controller has a single Ethernet port, already used for this PC's
     wired link (step 1). The Compute Box needs its own path to both the controller and (for

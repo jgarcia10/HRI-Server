@@ -1,7 +1,7 @@
 robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: false,
-        gripper: {kind: tool_do, close_high: false}}
-        # Lab RG2 v2 (verified 2026-09-10): pendant Installation → I/O, tool output "controlled by
-        # user" (NOT by OnRobot); then tool DO0 = 1 OPENS and DO0 = 0 CLOSES → close_high: false.
+        gripper: {kind: dual_do, close_do: 0, open_do: 1, settle_s: 1.0, hold_close: true}}
+        # Lab RG2 v2 (measured 2026-09-10/11): tool DO0 = CLOSE, DO1 = OPEN — the two directions
+        # of an H-bridge inside the gripper. (1, 1) is FORBIDDEN: it latches a gripper fault.
         # kind: tool_do        — UR tool DO0 level; close_high selects the polarity.
         # kind: onrobot_modbus — direct Modbus TCP to the box, bypasses the URCap:
         # gripper: {kind: onrobot_modbus, ip: 192.168.1.1, port: 502, unit_id: 65,
