@@ -110,6 +110,7 @@ class FakeControl:
         self.calls = []
         self.connected = True
         self.ik_result = None       # override the inverse-kinematics answer
+        self.reupload_works = True  # False = reuploadScript reports success but the script stays dead
         self.custom_scripts = []    # [(function_name, script), ...]
         self.send_custom_script_ok = True
         if with_ex:                 # only some builds expose the non-deprecated form
@@ -150,7 +151,8 @@ class FakeControl:
     def teachMode(self): self.calls.append(("teach",)); return True
     def endTeachMode(self): self.calls.append(("endteach",)); return True
 
-    def reuploadScript(self): self.calls.append(("reuploadScript",)); return True
+    def reuploadScript(self): self.calls.append(("reuploadScript",)); return self.reupload_works
+    def isProgramRunning(self): return self.reupload_works
 
     def sendCustomScriptFunction(self, function_name, script):
         self.calls.append(("sendCustomScriptFunction", function_name, script))
@@ -507,47 +509,59 @@ def test_set_pace_is_allowed_while_stopped():
 
 # ------------------------------------------------------------------------ IK
 @pytest.mark.parametrize("bad", [
-    [],                                      # empty / no solution
+    [],                                      # empty — what a dead control script returns
     [0.0, 0.0, 0.0],                         # degenerate length
-    [x + 1.6 for x in Q],                    # far branch (> IK_BRANCH_TOL_RAD from taught q)
     [float("nan")] * 6,                      # non-finite
 ])
-def test_unusable_ik_falls_back_to_a_cartesian_approach(bad):
-    """The controller's IK is not dependable on every taught pose (off-branch answers, and on
-    one slot it kills the control script). The backend must never moveJ onto such a solution,
-    but it must not lose the slot either: it reaches the approach point with moveL, which the
-    controller solves from the current configuration and so cannot branch-flip."""
+def test_ik_without_an_answer_revives_the_script_then_approaches_cartesian(bad):
+    """No answer means the controller, not the pose: the control script may have died with
+    the call, so it is revived before the fallback Cartesian move is attempted."""
     b, c, r, io = make()
     c.ik_result = bad
     b.pick("RD1")
-    assert [k[0] for k in c.calls if k[0] in ("moveJ", "ik", "moveL")] == [
-        "moveJ", "ik", "moveL", "moveL", "moveL"]      # transit, IK, above, down, back up
-    moved_j = [k[1] for k in c.calls if k[0] == "moveJ"]
-    assert moved_j == [CAL["transit"]["q"]]            # never moveJ onto a bad solution
+    assert [k[0] for k in c.calls if k[0] in ("moveJ", "ik", "reuploadScript", "moveL")] == [
+        "moveJ", "ik", "reuploadScript", "moveL", "moveL", "moveL"]
+    assert [k[1] for k in c.calls if k[0] == "moveJ"] == [CAL["transit"]["q"]]
 
 
-def test_ik_call_that_kills_the_control_script_is_reuploaded_before_the_fallback():
-    """LM1 makes the controller's IK crash the RTDE control script. The fallback Cartesian
-    move would then fail for a reason that has nothing to do with reach, so the script is
-    restored first."""
+def test_off_branch_ik_approaches_cartesian_without_touching_the_script():
+    """A well-formed answer that sits off the taught branch says nothing about the control
+    script: never moveJ onto it, but do not restart anything either — just approach linearly,
+    which the controller solves from the current configuration and so cannot branch-flip."""
     b, c, r, io = make()
+    c.ik_result = [x + 1.6 for x in Q]
+    b.pick("RD1")
+    assert [k[0] for k in c.calls if k[0] in ("moveJ", "ik", "reuploadScript", "moveL")] == [
+        "moveJ", "ik", "moveL", "moveL", "moveL"]
+    assert [k[1] for k in c.calls if k[0] == "moveJ"] == [CAL["transit"]["q"]]
+
+
+def test_control_script_that_stays_dead_is_recovered_by_reopening_the_interfaces():
+    """Measured on this controller: after the IK crash, reuploadScript() reports success but
+    the script stays stopped. Reopening the RTDE interfaces is what actually restores it."""
+    b, c, r, io = make()
+    c.reupload_works = False
+    opened = []
+    factory = b._factory
+    b._factory = lambda ip: (opened.append(ip) or factory(ip))
 
     def boom(*a, **kw):
-        c.calls.append(("ik", list(a[0]) if a else []))
+        c.calls.append(("ik", []))
         raise RuntimeError("control script stopped")
     c.getInverseKinematics = boom
     b.pick("RD1")
+    assert opened == ["192.168.131.140"]                  # interfaces reopened exactly once
     assert [k[0] for k in c.calls if k[0] in ("ik", "reuploadScript", "moveL")] == [
         "ik", "reuploadScript", "moveL", "moveL", "moveL"]
 
 
-def test_ik_branch_guard_still_catches_a_flip_before_moving():
-    """The guard itself is intact: an off-branch answer is refused with a message naming the
-    slot and the distance, whatever the backend then does about it."""
+def test_ik_branch_guard_names_the_slot_and_the_distance():
+    """The guard itself is intact, and its message has to be actionable at the pendant: it
+    names the slot and how far off the branch the answer was."""
     b, c, r, io = make()
     c.ik_result = [x + 1.6 for x in Q]
     node = b.cal["depot"]["RD1"]
-    with pytest.raises(RobotError, match=r"IK solution rejected for RD1: off the taught branch"):
+    with pytest.raises(RobotError, match=r"RD1: off the taught branch by 92deg \(limit 69deg\)"):
         b._ik(node["pose"], node, "RD1")
 
 

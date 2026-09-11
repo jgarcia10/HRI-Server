@@ -358,24 +358,29 @@ class URBackend(RobotBackend):
 
     # -------------------------------------------------------------------- IK
     def _ik(self, pose, node, slot: str):
-        """Inverse kinematics for an approach pose, validated against the taught branch."""
+        """Inverse kinematics for an approach pose, validated against the taught branch.
+
+        Two failures are distinguished because they need different handling: the controller
+        not answering at all (`_IKCallFailed` — the call raised, or it returned an empty /
+        malformed list, which is what a control script that has just died does), versus a
+        well-formed answer that sits off the taught branch.
+        """
         try:
             sol = self.ctrl.getInverseKinematics(list(pose), qnear=list(node["q"]))
         except Exception as e:
-            raise _IKCallFailed(f"IK solution rejected for {slot}: {e}") from e
-        ref = [float(x) for x in node["q"]]
+            raise _IKCallFailed(f"IK call failed for {slot}: {e}") from e
         try:
             q = [float(x) for x in sol]
         except (TypeError, ValueError):
-            raise RobotError(f"IK solution rejected for {slot}") from None
-        if (len(q) != 6 or not all(math.isfinite(x) for x in q)
-                or max(abs(a - b) for a, b in zip(q, ref)) > IK_BRANCH_TOL_RAD):
-            worst = (max(abs(a - b) for a, b in zip(q, ref))
-                     if len(q) == 6 and all(math.isfinite(x) for x in q) else float("nan"))
+            q = []
+        if len(q) != 6 or not all(math.isfinite(x) for x in q):
+            raise _IKCallFailed(f"the controller returned no IK solution for {slot}")
+        ref = [float(x) for x in node["q"]]
+        worst = max(abs(a - b) for a, b in zip(q, ref))
+        if worst > IK_BRANCH_TOL_RAD:
             raise RobotError(
                 f"IK solution rejected for {slot}: off the taught branch by "
-                f"{math.degrees(worst):.0f}deg (limit {math.degrees(IK_BRANCH_TOL_RAD):.0f}deg) — "
-                "re-teach this pose with a more comfortable arm posture")
+                f"{math.degrees(worst):.0f}deg (limit {math.degrees(IK_BRANCH_TOL_RAD):.0f}deg)")
         return q
 
     def _goto_above(self, slot: str, node: dict, above) -> None:
@@ -383,27 +388,45 @@ class URBackend(RobotBackend):
         usable, Cartesian move otherwise.
 
         The controller's ``getInverseKinematics`` is not dependable on every taught pose in
-        this cell — it has returned solutions off the taught branch, and on one slot it kills
-        the RTDE control script outright. ``moveL`` asks the controller to solve the same
-        target internally, seeded from the current configuration, so it cannot branch-flip;
-        it is slower, which is why it is the fallback and not the default. If the point is
-        genuinely out of reach, moveL fails on its own and the slot is reported as before.
+        this cell — on one slot it kills the RTDE control script outright. ``moveL`` asks the
+        controller to solve the same target internally, seeded from the current configuration,
+        so it cannot branch-flip; it is slower, which is why it is the fallback and not the
+        default. If the point is genuinely out of reach, moveL fails on its own and the slot
+        is reported exactly as before.
         """
         try:
             q = self._ik(above, node, slot)
         except RobotError as e:
             log.warning("%s: IK unusable (%s) — approaching with a Cartesian move", slot, e)
             if isinstance(e, _IKCallFailed):
-                # The failed call may have taken the control script with it; without this the
-                # fallback move would fail too, for a reason that has nothing to do with reach.
-                try:
-                    self.ctrl.reuploadScript()
-                except Exception:
-                    log.warning("%s: could not reupload the control script after the IK call",
-                                slot)
+                # The call may have taken the control script with it; without this the
+                # fallback move fails too, for a reason that has nothing to do with reach.
+                self._revive_control(slot)
             self._moveL(above)
         else:
             self._moveJ(q)
+
+    def _revive_control(self, slot: str) -> None:
+        """Bring the RTDE control script back after a call killed it.
+
+        `reuploadScript()` is the cheap way and the one the URCap gripper already uses, but
+        it is not always enough: measured on this controller, after the IK crash it returns
+        True while `isProgramRunning()` stays False and every later control call answers
+        with nothing. Reopening the interfaces does restore it, so that is the fallback.
+        The stop latch is deliberately left alone — this is not a resume path.
+        """
+        try:
+            if self.ctrl.reuploadScript() and self.ctrl.isProgramRunning():
+                return
+        except Exception:
+            pass
+        log.warning("%s: the control script did not come back — reopening the RTDE interfaces",
+                    slot)
+        self._close_interfaces()
+        try:
+            self.ctrl, self.recv, self.io = self._factory(self.ip)
+        except Exception as e:
+            raise RobotFault(f"lost the RTDE control script and could not reopen it: {e}") from e
 
     # ---------------------------------------------------------------- motions
     def _approach_and(self, slot: str, node: dict, close: bool) -> None:

@@ -16,6 +16,7 @@ KEEP A HAND ON THE E-STOP. Start with one slot before running --all.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import time
 from pathlib import Path
@@ -43,6 +44,7 @@ def main() -> int:
                          "reaching a 32 mm brick needs ~5 s of the ~7 s full stroke)")
     ap.add_argument("--yes", action="store_true", help="do not pause between slots")
     args = ap.parse_args()
+    logging.basicConfig(level=logging.INFO, format="    · %(message)s")
 
     slots = ORDER if args.all else (args.slots or [])
     if not slots:
