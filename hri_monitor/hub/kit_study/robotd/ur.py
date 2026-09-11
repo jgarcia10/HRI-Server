@@ -48,13 +48,20 @@ class _IKCallFailed(RobotError):
 
 GRIPPER_TOOL_DO = 0          # tool digital output 0 == legacy SetIO(fun=1, pin=16); True = close
 # Joint/linear speed and acceleration per pace level. Overridable from the mode config
-# (`robot.speeds`) so the cell can be tuned without a code change. `fast` is roughly a third
-# of the UR5's maximum joint speed (3.14 rad/s) — brisk next to a seated participant, with
-# acceleration kept well below the arm's limit so the motion still reads as deliberate.
+# (`robot.speeds`) so the cell can be tuned without a code change.
+#
+# Rescaled 2026-09-11 after watching all 14 slots run: the whole scale moved up one step,
+# because what used to be `fast` read as the natural working speed in the room. The old
+# `normal` is now `slow`, the old `fast` is now `normal`, and `fast` is new. The original
+# crawl (0.30 rad/s, 0.08 m/s) is gone from the scale — put it back in `robot.speeds` for a
+# first run over freshly taught poses if you want to watch the arm at walking pace.
+#
+# `fast` is a bit over half the UR5's own joint ceiling (3.14 rad/s), with acceleration kept
+# well under the arm's limit so the motion still reads as deliberate next to a participant.
 DEFAULT_SPEEDS = {
-    "slow":   {"joint_v": 0.30, "joint_a": 0.50, "lin_v": 0.08, "lin_a": 0.30},
-    "normal": {"joint_v": 0.60, "joint_a": 0.80, "lin_v": 0.15, "lin_a": 0.50},
-    "fast":   {"joint_v": 1.10, "joint_a": 1.50, "lin_v": 0.30, "lin_a": 0.90},
+    "slow":   {"joint_v": 0.60, "joint_a": 0.80, "lin_v": 0.15, "lin_a": 0.50},
+    "normal": {"joint_v": 1.10, "joint_a": 1.50, "lin_v": 0.30, "lin_a": 0.90},
+    "fast":   {"joint_v": 1.80, "joint_a": 2.20, "lin_v": 0.45, "lin_a": 1.30},
 }
 
 # Verified fault-recovery sequence (measured 2026-09-11) for a gripper that latched a fault by

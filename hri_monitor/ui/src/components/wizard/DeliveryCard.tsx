@@ -82,7 +82,7 @@ export function DeliveryCard({
           options={[
             { value: "slow", label: "Slow", sub: "calm" },
             { value: "normal", label: "Normal", sub: "default" },
-            { value: "fast", label: "Fast", sub: "brisk" },
+            { value: "fast", label: "Fast", sub: "quickest" },
           ]}
         />
       </div>

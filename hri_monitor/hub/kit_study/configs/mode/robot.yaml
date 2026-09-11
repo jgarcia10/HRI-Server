@@ -1,13 +1,16 @@
 robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 6.5, gripper_open_settle_s: 1.5, allow_example_calibration: false,
         gripper: {kind: tool_do, do: 0, close_high: true},
-        speeds: {slow:   {joint_v: 0.30, joint_a: 0.50, lin_v: 0.08, lin_a: 0.30},
-                 normal: {joint_v: 0.60, joint_a: 0.80, lin_v: 0.15, lin_a: 0.50},
-                 fast:   {joint_v: 1.10, joint_a: 1.50, lin_v: 0.30, lin_a: 0.90}}}
+        speeds: {slow:   {joint_v: 0.60, joint_a: 0.80, lin_v: 0.15, lin_a: 0.50},
+                 normal: {joint_v: 1.10, joint_a: 1.50, lin_v: 0.30, lin_a: 0.90},
+                 fast:   {joint_v: 1.80, joint_a: 2.20, lin_v: 0.45, lin_a: 1.30}}}
         # `speeds` is the arm, per pace level — the wizard's "Robot speed" switch picks one
         # live. joint_v is rad/s (the UR5's own ceiling is 3.14) and lin_v m/s. This is the
         # only speed that can actually be tuned: the RG2's jaws run at a fixed rate set in
         # the gripper's own firmware, so `gripper_settle_s` below is a *waiting* time, not a
         # speed. Raise a level only after watching a full supply cycle at it.
+        # The scale moved up a step on 2026-09-11 (the old `fast` became `normal`). For a
+        # first run over freshly taught poses, set slow back to the original crawl —
+        # {joint_v: 0.30, joint_a: 0.50, lin_v: 0.08, lin_a: 0.30} — and watch from there.
         #
         # gripper_settle_s 6.5 = how long the jaws are given to close. They always rest fully
         # open (~110 mm) because DO0 = 0 is held between cycles, so every grasp travels most
