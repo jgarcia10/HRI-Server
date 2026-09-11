@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { DeliveryCard } from "../components/wizard/DeliveryCard";
+import { BinsCard } from "../components/wizard/BinsCard";
 import { LogCard } from "../components/wizard/LogCard";
 import { NowBuildingCard } from "../components/wizard/NowBuildingCard";
 import { QuestionnaireCard } from "../components/wizard/QuestionnaireCard";
@@ -246,6 +247,9 @@ export function Runner() {
                 }
                 onMatCleared={() => run("delivery", matCleared)}
               />
+            </div>
+            <div className="order-8">
+              <BinsCard task={task} supply={supply} />
             </div>
             <div className="order-6">
               <SpeechCard
