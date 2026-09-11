@@ -9,7 +9,8 @@ import time
 from .base import (PACE_FACTOR, Aborted, RobotBackend, RobotError, RobotState, validate_depot_slot,
                    validate_pace, validate_staging_slot)
 
-DEFAULT_TIMING = {"home": 3.0, "pick": 2.5, "place": 2.5, "open_gripper": 0.5, "noise_std": 0.2}
+DEFAULT_TIMING = {"home": 3.0, "pick": 2.5, "place": 2.5, "open_gripper": 0.5,
+                  "close_gripper": 0.5, "reset_gripper": 35.0, "noise_std": 0.2}
 
 
 class SimBackend(RobotBackend):
@@ -78,6 +79,21 @@ class SimBackend(RobotBackend):
 
     def open_gripper(self) -> None:
         self._run("open_gripper")
+        self._gripper_closed = False
+
+    def close_gripper(self) -> None:
+        # Gripper-only skills are also a resume path, like home() — see URBackend.close_gripper
+        # for why: they command no arm motion, so a STOP latch must not stand between the
+        # operator and the gripper.
+        self._abort.clear()
+        self._run("close_gripper")
+        self._gripper_closed = True
+
+    def reset_gripper(self) -> None:
+        """Scripted delay standing in for the real power-cycle recovery, ending open — the
+        safe idle state the real gripper wakes into (see `URBackend.reset_gripper`)."""
+        self._abort.clear()
+        self._run("reset_gripper")
         self._gripper_closed = False
 
     def set_pace(self, level: str) -> None:

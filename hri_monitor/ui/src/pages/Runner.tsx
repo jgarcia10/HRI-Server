@@ -22,9 +22,11 @@ import {
   matCleared,
   postEvent,
   type Plan,
+  robotCloseGripper,
   robotConnect,
   robotHome,
   robotOpenGripper,
+  robotResetGripper,
   robotStop,
   setSupplyProfile,
   skipQuestionnaires,
@@ -208,6 +210,8 @@ export function Runner() {
                 error={errors.robot ?? null}
                 onHome={() => run("robot", robotHome)}
                 onOpenGripper={() => run("robot", robotOpenGripper)}
+                onCloseGripper={() => run("robot", robotCloseGripper)}
+                onResetGripper={() => run("robot", robotResetGripper)}
                 onReconnect={() => run("robot", robotConnect)}
               />
             </div>

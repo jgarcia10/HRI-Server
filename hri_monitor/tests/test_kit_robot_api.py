@@ -23,7 +23,8 @@ class FakeManager:
 
 
 FAST = {"robot": {"backend": "sim", "timing": {"home": 0.005, "pick": 0.005, "place": 0.005,
-                                               "open_gripper": 0.005, "noise_std": 0.0}},
+                                               "open_gripper": 0.005, "close_gripper": 0.005,
+                                               "reset_gripper": 0.005, "noise_std": 0.0}},
         "supply": {"lookahead": 2, "side": "L", "pace": "normal", "announce": False}}
 
 
@@ -64,6 +65,13 @@ def test_robot_state_and_home(client):
     assert st["backend"] == "sim" and st["connected"] is True
     r = client.post("/api/kit/robot/home")
     assert r.status_code == 200 and "job_id" in r.json()
+
+
+def test_close_and_reset_gripper_endpoints(client):
+    r = client.post("/api/kit/robot/close_gripper")
+    assert r.status_code == 200 and r.json()["ok"] is True and r.json()["job_id"]
+    r = client.post("/api/kit/robot/reset_gripper")
+    assert r.status_code == 200 and r.json()["ok"] is True and r.json()["job_id"]
 
 
 def test_session_runs_supply_with_profile(client):
@@ -147,7 +155,8 @@ def test_robot_endpoints_503_without_a_bridge(tmp_path):
         for path in ("/api/kit/robot/state", "/api/kit/supply/state"):
             assert c.get(path).status_code == 503
         for path in ("/api/kit/robot/home", "/api/kit/robot/stop", "/api/kit/robot/connect",
-                     "/api/kit/robot/open_gripper"):
+                     "/api/kit/robot/open_gripper", "/api/kit/robot/close_gripper",
+                     "/api/kit/robot/reset_gripper"):
             assert c.post(path).status_code == 503
         assert c.post("/api/kit/supply/profile", json={"lookahead": 1}).status_code == 503
 
@@ -192,8 +201,9 @@ def test_build_backend_default_gripper_is_tool_do():
 
 def test_build_backend_tool_do_polarity_from_config():
     """robot.gripper.close_high: false (single-DO wiring) still reaches the default
-    ToolDOGripper — kept for ursim/URCap-managed digital I/O; the lab's own robot.yaml has
-    moved on to `kind: dual_do` (see test_build_backend_dual_do_gripper_from_shipped_config)."""
+    ToolDOGripper — kept for ursim/URCap-managed digital I/O; the lab's own robot.yaml also
+    ships `kind: tool_do` (see test_build_backend_shipped_config_is_tool_do), with the
+    opposite polarity measured on site."""
     from hub.kit_study.robotd.gripper import ToolDOGripper
     cfg = load_mode("ursim", overrides={"robot": {"gripper": {"kind": "tool_do", "close_high": False}}})
     backend = build_backend(cfg)
@@ -215,19 +225,19 @@ def test_build_backend_dual_do_gripper_from_config():
     assert backend.gripper._io_getter() is backend.io
 
 
-def test_build_backend_dual_do_gripper_from_shipped_config():
-    """The shipped robot.yaml now uses kind: dual_do — DO0 closes, DO1 opens, matching the
-    measured lab wiring — with sane defaults."""
-    from hub.kit_study.robotd.gripper import DualDOGripper
+def test_build_backend_shipped_config_is_tool_do():
+    """The shipped robot.yaml is `kind: tool_do` — the lab's RG2 v2 is a single-line,
+    level-driven gripper on tool DO0 (measured 2026-09-11). `kind: dual_do` must never be
+    used on this robot: its `open_do` line is tool DO1, and writing it faults the gripper."""
+    from hub.kit_study.robotd.gripper import ToolDOGripper
     cfg = load_mode("ursim", overrides={"robot": {
         "gripper": load_mode("robot")["robot"]["gripper"]}})
     backend = build_backend(cfg)
-    assert isinstance(backend.gripper, DualDOGripper)
-    assert backend.gripper.close_do == 0
-    assert backend.gripper.open_do == 1
-    assert backend.gripper.hold_close is True
+    assert isinstance(backend.gripper, ToolDOGripper)
+    assert backend.gripper.do == 0
+    assert backend.gripper.close_high is True
     assert load_mode("robot")["robot"]["gripper"] == {
-        "kind": "dual_do", "close_do": 0, "open_do": 1, "settle_s": 1.0, "hold_close": True}
+        "kind": "tool_do", "do": 0, "close_high": True, "settle_s": 5.0}
 
 
 def test_build_backend_onrobot_modbus_gripper():

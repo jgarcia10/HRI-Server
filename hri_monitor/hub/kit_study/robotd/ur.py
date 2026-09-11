@@ -39,6 +39,22 @@ DEFAULT_SPEEDS = {
     "slow":   {"joint_v": 0.3, "joint_a": 0.5, "lin_v": 0.08, "lin_a": 0.3},
 }
 
+# Verified fault-recovery sequence (measured 2026-09-11) for a gripper that latched a fault by
+# closing fully on air: power-cycle the tool voltage, then wake it with a short DO0 pulse.
+# Tool DO1 is never touched by this sequence (see ToolDOGripper / DualDOGripper docstrings).
+GRIPPER_RESET_SCRIPT_NAME = "kit_tool_power"
+GRIPPER_RESET_SCRIPT = (
+    "  set_tool_voltage(0)\n"
+    "  sleep(20)\n"
+    "  set_tool_voltage(24)\n"
+    "  sleep(2)\n"
+)
+GRIPPER_RESET_VOLTAGE_CYCLE_S = 22.0    # matches the script's own sleep(20) + sleep(2)
+GRIPPER_RESET_WAKE_WAIT_S = 8.0         # gripper stays dark (tool AI0 ~0.07 V) after 24 V returns
+GRIPPER_RESET_PULSE_S = 0.35            # short DO0-high pulse that wakes the gripper
+GRIPPER_RESET_REUPLOAD_SETTLE_S = 0.2   # let the controller drop the temp script first
+                                         # (same pattern as OnRobotURCapGripper.REUPLOAD_SETTLE_S)
+
 POLL_S = 0.05                # async-progress poll period
 MOVE_TIMEOUT_S = 20.0        # a taught move never takes this long; longer == something is wrong
 STOP_TIMEOUT_S = 3.0         # bounded wait for the controller to report the stop took effect
@@ -85,7 +101,11 @@ class URBackend(RobotBackend):
                  gripper: Gripper | Callable | None = None, gripper_close_high: bool = True,
                  poll_s: float = POLL_S, move_timeout_s: float = MOVE_TIMEOUT_S,
                  stop_timeout_s: float = STOP_TIMEOUT_S, reach_grace_s: float = REACH_GRACE_S,
-                 clock=time.monotonic):
+                 clock=time.monotonic,
+                 gripper_reset_voltage_cycle_s: float = GRIPPER_RESET_VOLTAGE_CYCLE_S,
+                 gripper_reset_wake_wait_s: float = GRIPPER_RESET_WAKE_WAIT_S,
+                 gripper_reset_pulse_s: float = GRIPPER_RESET_PULSE_S,
+                 gripper_reset_reupload_settle_s: float = GRIPPER_RESET_REUPLOAD_SETTLE_S):
         self.ip = ip
         self.cal = calibration
         self.speeds = speeds or DEFAULT_SPEEDS
@@ -111,6 +131,12 @@ class URBackend(RobotBackend):
         self.move_timeout_s = float(move_timeout_s)
         self.stop_timeout_s = float(stop_timeout_s)
         self.reach_grace_s = float(reach_grace_s)
+        # Reset-gripper timings are instance attributes (not bare module constants) so tests
+        # can drive the whole ~30 s recovery sequence in milliseconds without touching its logic.
+        self.gripper_reset_voltage_cycle_s = float(gripper_reset_voltage_cycle_s)
+        self.gripper_reset_wake_wait_s = float(gripper_reset_wake_wait_s)
+        self.gripper_reset_pulse_s = float(gripper_reset_pulse_s)
+        self.gripper_reset_reupload_settle_s = float(gripper_reset_reupload_settle_s)
         self._clock = clock
         self.ctrl = self.recv = self.io = None
         self._pace = "normal"
@@ -374,6 +400,63 @@ class URBackend(RobotBackend):
             if self.settle and self._abort.wait(self.settle):
                 raise Aborted("motion stopped by stop() during gripper settle")
         self._run("open_gripper", _open)
+
+    def close_gripper(self) -> None:
+        # Gripper-only skills are also a resume path, like home(): they command no arm
+        # motion, so the operator must not be forced to Home (and move the arm) just to
+        # release or reset the gripper right after a STOP — that is exactly when they need
+        # it (robot_bridge._LATCH_SAFE admits close_gripper/reset_gripper through the
+        # bridge's latch for the same reason). Clearing here also matters mechanically: the
+        # interruptible waits below poll this same `_abort` event, so leaving it set would
+        # make them fire immediately.
+        self._abort.clear()
+        def _close():
+            self.gripper.close()
+            if self.settle and self._abort.wait(self.settle):
+                raise Aborted("motion stopped by stop() during gripper settle")
+        self._run("close_gripper", _close)
+
+    def _io_set(self, do: int, level: bool) -> None:
+        if not self.io.setToolDigitalOut(do, level):
+            raise RobotError("gripper command refused")
+
+    def _wait_or_abort(self, seconds: float, phase: str, on_abort=None) -> None:
+        if seconds and self._abort.wait(seconds):
+            if on_abort is not None:
+                on_abort()
+            raise Aborted(f"motion stopped by stop() during gripper reset ({phase})")
+
+    def reset_gripper(self) -> None:
+        """Verified recovery (2026-09-11) from a gripper fault latched by closing fully on
+        air: power-cycle the tool voltage, then wake the gripper with a short DO0 pulse.
+
+        Tool DO1 is never written here — the lab wiring rule is that it is asserted low
+        exactly once, at `ToolDOGripper.connect()`, and never touched again. Sending the
+        reset program over the controller kills the ur_rtde control script (same as
+        `OnRobotURCapGripper`), so it is restored with `reuploadScript()` at the end. Every
+        wait is interruptible by `stop()`, same as every other skill.
+
+        Like `close_gripper`, this is also a resume path (see its comment): it commands no
+        arm motion, so a STOP latch must not stand between the operator and recovering a
+        faulted gripper.
+        """
+        self._abort.clear()
+        def _reset():
+            self._io_set(GRIPPER_TOOL_DO, False)     # DO0 = 0: the safe/open level, first
+            if not self.ctrl.sendCustomScriptFunction(GRIPPER_RESET_SCRIPT_NAME,
+                                                       GRIPPER_RESET_SCRIPT):
+                raise RobotError("gripper reset script refused")
+            self._wait_or_abort(self.gripper_reset_voltage_cycle_s, "tool-voltage cycle")
+            self._wait_or_abort(self.gripper_reset_wake_wait_s, "wake wait")
+            self._io_set(GRIPPER_TOOL_DO, True)      # wake pulse: DO0 high …
+            self._wait_or_abort(self.gripper_reset_pulse_s, "wake pulse",
+                                on_abort=lambda: self._io_set(GRIPPER_TOOL_DO, False))
+            self._io_set(GRIPPER_TOOL_DO, False)     # … then low again
+            self._wait_or_abort(self.gripper_reset_reupload_settle_s, "settle")
+            self.ctrl.reuploadScript()
+            if hasattr(self.gripper, "_closed"):
+                self.gripper._closed = False          # the gripper wakes open (DO0 = 0)
+        self._run("reset_gripper", _reset)
 
     def set_pace(self, level: str) -> None:
         self._pace = validate_pace(level)   # no motion — allowed while a stop is latched

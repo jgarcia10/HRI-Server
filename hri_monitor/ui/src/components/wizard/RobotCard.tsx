@@ -1,5 +1,5 @@
 /** Robot health and the three recovery buttons, plus the banner for a latched stop. */
-import { Bot, Hand, House, OctagonAlert, Plug } from "lucide-react";
+import { Bot, Grip, Hand, House, OctagonAlert, Plug, RotateCcw } from "lucide-react";
 import type { RobotState, SupplyState } from "../../lib/kit";
 import { Banner, Btn, Card, Readout } from "./ui";
 import { backendWord, latchAction, latchTitle, paceWord, safetyWord } from "./vocab";
@@ -10,6 +10,8 @@ export function RobotCard({
   error,
   onHome,
   onOpenGripper,
+  onCloseGripper,
+  onResetGripper,
   onReconnect,
 }: {
   robot: RobotState | null;
@@ -17,10 +19,13 @@ export function RobotCard({
   error: string | null;
   onHome: () => void;
   onOpenGripper: () => void;
+  onCloseGripper: () => void;
+  onResetGripper: () => void;
   onReconnect: () => void;
 }) {
   const connected = !!robot?.connected;
   const latched = robot?.latched ?? null;
+  const busy = !!robot?.busy;
   return (
     <Card icon={Bot} title="Robot" hint="Safety and recovery." error={error}>
       {latched && (
@@ -62,14 +67,6 @@ export function RobotCard({
           Home
         </Btn>
         <Btn
-          variant="neutral"
-          icon={Hand}
-          onClick={onOpenGripper}
-          title="Open the gripper (releases a brick it is holding)"
-        >
-          Open gripper
-        </Btn>
-        <Btn
           variant={connected ? "quiet" : "warn"}
           icon={Plug}
           onClick={onReconnect}
@@ -81,6 +78,53 @@ export function RobotCard({
         >
           Reconnect
         </Btn>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <p className="text-[11px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+          Gripper
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Btn
+            variant="neutral"
+            icon={Grip}
+            onClick={onCloseGripper}
+            disabled={busy}
+            title={busy ? "Wait for the current robot action to finish" : "Close the gripper"}
+          >
+            Close gripper
+          </Btn>
+          <Btn
+            variant="neutral"
+            icon={Hand}
+            onClick={onOpenGripper}
+            disabled={busy}
+            title={
+              busy
+                ? "Wait for the current robot action to finish"
+                : "Open the gripper (releases a brick it is holding)"
+            }
+          >
+            Open gripper
+          </Btn>
+          <Btn
+            variant="neutral"
+            icon={RotateCcw}
+            onClick={onResetGripper}
+            disabled={busy}
+            title={
+              busy
+                ? "Wait for the current robot action to finish"
+                : "Recover the gripper after it stopped responding"
+            }
+          >
+            Reset gripper
+          </Btn>
+        </div>
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          Reset gripper takes ~35 s — use it if the gripper stops responding after closing on
+          empty air.
+        </p>
       </div>
     </Card>
   );

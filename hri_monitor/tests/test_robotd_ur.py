@@ -6,12 +6,14 @@ value (toggling -1/-2) once it finishes. Only an async move can be interrupted b
 stopJ/stopL — which is why URBackend polls instead of blocking.
 """
 import threading
+import time
 
 import pytest
 import yaml
 
 from hub.kit_study.robotd.base import Aborted, EmergencyStop, ProtectiveStop, RobotError, RobotFault
-from hub.kit_study.robotd.ur import DEFAULT_SPEEDS, GRIPPER_TOOL_DO, URBackend, load_calibration
+from hub.kit_study.robotd.ur import (DEFAULT_SPEEDS, GRIPPER_RESET_SCRIPT, GRIPPER_RESET_SCRIPT_NAME,
+                                     GRIPPER_TOOL_DO, URBackend, load_calibration)
 
 Q = [0.1, -1.5, 1.2, -1.3, -1.57, 0.0]
 POSE = [0.4, -0.2, 0.15, 0.0, 3.14, 0.0]
@@ -108,6 +110,8 @@ class FakeControl:
         self.calls = []
         self.connected = True
         self.ik_result = None       # override the inverse-kinematics answer
+        self.custom_scripts = []    # [(function_name, script), ...]
+        self.send_custom_script_ok = True
         if with_ex:                 # only some builds expose the non-deprecated form
             self.getAsyncOperationProgressEx = self._progress_ex
 
@@ -147,6 +151,11 @@ class FakeControl:
     def endTeachMode(self): self.calls.append(("endteach",)); return True
 
     def reuploadScript(self): self.calls.append(("reuploadScript",)); return True
+
+    def sendCustomScriptFunction(self, function_name, script):
+        self.calls.append(("sendCustomScriptFunction", function_name, script))
+        self.custom_scripts.append((function_name, script))
+        return self.send_custom_script_ok
 
 
 class FakeReceive:
@@ -192,6 +201,8 @@ def make(cal=CAL, with_ex=False, **kw):
     kw.setdefault("poll_s", 0.0)
     b = URBackend("192.168.131.140", cal, rtde_factory=lambda ip: (c, r, io), **kw)
     b.connect()
+    io.calls.clear()   # ToolDOGripper.connect() forces DO1 low and opens; tests assert on
+                        # what skills do afterwards, not on the reconnect housekeeping
     return b, c, r, io
 
 
@@ -231,6 +242,78 @@ def test_place_opens_gripper():
     b, c, r, io = make()
     b.place("L")
     assert io.calls == [(GRIPPER_TOOL_DO, False)]
+    assert b.state().gripper_closed is False
+
+
+def test_close_gripper_calls_gripper_close():
+    b, c, r, io = make()
+    b.close_gripper()
+    assert io.calls == [(GRIPPER_TOOL_DO, True)]
+    assert b.state().gripper_closed is True and b.state().last_skill == "close_gripper"
+
+
+# ------------------------------------------------------------- reset_gripper
+def make_for_reset(**kw):
+    """`make()` with the whole reset sequence's waits collapsed to zero, so tests exercise
+    the sequencing/DO-safety logic without the real ~30 s of scripted waits."""
+    kw.setdefault("gripper_reset_voltage_cycle_s", 0.0)
+    kw.setdefault("gripper_reset_wake_wait_s", 0.0)
+    kw.setdefault("gripper_reset_pulse_s", 0.0)
+    kw.setdefault("gripper_reset_reupload_settle_s", 0.0)
+    return make(**kw)
+
+
+def test_reset_gripper_sends_script_pulses_do0_and_reuploads():
+    b, c, r, io = make_for_reset()
+    b.reset_gripper()
+    assert c.custom_scripts == [(GRIPPER_RESET_SCRIPT_NAME, GRIPPER_RESET_SCRIPT)]
+    assert [k[0] for k in c.calls] == ["sendCustomScriptFunction", "reuploadScript"]
+    # DO0 low (safe/open) before the script, then the wake pulse high -> low; DO1 never touched
+    assert io.calls == [(GRIPPER_TOOL_DO, False), (GRIPPER_TOOL_DO, True), (GRIPPER_TOOL_DO, False)]
+    assert not any(do == 1 and level for do, level in io.calls)   # DO1 never written high
+    assert b.state().gripper_closed is False and b.state().last_skill == "reset_gripper"
+
+
+def test_reset_gripper_refused_script_raises_robot_error():
+    b, c, r, io = make_for_reset()
+    c.send_custom_script_ok = False
+    with pytest.raises(RobotError, match="gripper reset script refused"):
+        b.reset_gripper()
+    assert ("reuploadScript",) not in [(k[0],) for k in c.calls]
+
+
+def test_reset_gripper_stop_during_wake_pulse_drops_do0_low_and_skips_reupload():
+    b, c, r, io = make_for_reset(gripper_reset_pulse_s=1.0)
+    stopped = threading.Event()
+
+    def stopper():
+        time.sleep(0.05)
+        b.stop()
+        stopped.set()
+    t = threading.Thread(target=stopper)
+    t.start()
+    with pytest.raises(Aborted, match="wake pulse"):
+        b.reset_gripper()
+    t.join(5.0)
+    assert stopped.is_set()
+    assert io.calls[-1] == (GRIPPER_TOOL_DO, False)     # pulse line dropped low before raising
+    assert not any(k[0] == "reuploadScript" for k in c.calls)   # aborted before the end
+
+
+def test_close_gripper_and_reset_gripper_are_a_resume_path_like_home():
+    """N-gripper: neither command moves the arm, so they must work even while the backend's
+    own stop latch is set — the operator must not be forced to Home first just to release or
+    recover the gripper right after a STOP (robot_bridge admits both through the bridge's
+    latch for the same reason)."""
+    b, c, r, io = make_for_reset()
+    b.stop()
+    assert b.stop_latched is True
+    b.close_gripper()                      # must not raise Aborted
+    assert b.state().gripper_closed is True
+    b.stop()
+    assert b.stop_latched is True
+    b.reset_gripper()                      # must not raise Aborted either
+    assert b.stop_latched is False
     assert b.state().gripper_closed is False
 
 

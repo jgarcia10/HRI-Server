@@ -110,6 +110,44 @@ def test_estop_latches_until_home_and_rejects_everything_else():
     bridge.stop()
 
 
+def test_close_and_reset_gripper_are_admitted_through_the_latch():
+    """The gripper-only skills must reach the backend even while the bridge is latched after
+    a STOP — the operator needs them precisely then, to release or recover the gripper
+    without first homing the arm."""
+    bus = MessageBus(); events = []
+    bus.subscribe("*", lambda m: events.append((m["topic"], m["data"])))
+    backend = SimBackend(timing={"home": 0.01, "pick": 0.01, "place": 0.01, "open_gripper": 0.01,
+                                 "close_gripper": 0.01, "reset_gripper": 0.01, "noise_std": 0.0},
+                         rng=random.Random(0))
+    bridge = RobotBridge(bus, backend)
+    bridge.start()
+    bridge.estop()
+    assert bridge.latched() == "estop"
+
+    events.clear()
+    assert bridge.submit("close_gripper") is not None
+    assert bridge.wait_idle(2.0)
+    done = [d for t, d in events if t == "robot.skill_done"]
+    assert done and done[-1]["skill"] == "close_gripper"
+    assert bridge.latched() == "estop"                    # only home clears the bridge latch
+    assert backend.state().gripper_closed is True
+
+    events.clear()
+    assert bridge.submit("reset_gripper") is not None
+    assert bridge.wait_idle(2.0)
+    done = [d for t, d in events if t == "robot.skill_done"]
+    assert done and done[-1]["skill"] == "reset_gripper"
+    assert bridge.latched() == "estop"
+    assert backend.state().gripper_closed is False
+
+    # everything else stays refused — only home/set_pace/close_gripper/reset_gripper are
+    # admitted through the latch (open_gripper deliberately is not: see test_robot_bridge.py's
+    # C1 test, which asserts it is rejected while latched)
+    assert bridge.submit("open_gripper") is None
+    assert bridge.submit("pick", depot_slot="BL1") is None
+    bridge.stop()
+
+
 def test_stop_mid_skill_aborts_and_flags_aborted():
     """The sim must interrupt the running skill so an aborted motion is observable."""
     bus = MessageBus(); events = []

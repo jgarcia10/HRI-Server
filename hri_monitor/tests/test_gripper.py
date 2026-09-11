@@ -186,8 +186,9 @@ def test_tool_do_gripper_close_and_open():
     assert g.grip_detected() is None
 
 
-def test_tool_do_gripper_inverted_polarity_for_the_lab_rg2():
-    """Lab RG2 v2, tool output 'controlled by user': DO0 = 0 closes, DO0 = 1 opens."""
+def test_tool_do_gripper_inverted_polarity_option():
+    """close_high=False: DO0 = 0 closes, DO0 = 1 opens — kept for a differently wired single-DO
+    gripper (the lab RG2 v2 itself is close_high=True, measured 2026-09-11: DO0 = 1 closes)."""
     io = FakeIO()
     g = ToolDOGripper(io_getter=lambda: io, do=0, settle_s=0.0, close_high=False)
     g.close()
@@ -203,6 +204,48 @@ def test_tool_do_gripper_false_return_raises_robot_error():
     with pytest.raises(RobotError, match="gripper command refused"):
         g.close()
     assert g.is_closed() is False   # unchanged on failure
+
+
+# --------------------------------------------------------------- ToolDOGripper.connect()
+def test_tool_do_gripper_connect_forces_other_do_low_and_opens():
+    """A reconnect must never inherit a stale DO1 or a leftover close level (the measured
+    lab fault mode): connect() forces the other line low exactly once, then commands open."""
+    io = FakeIO()
+    g = ToolDOGripper(io_getter=lambda: io, do=0, settle_s=0.0)   # other_do defaults to 1
+    g.connect()
+    assert io.calls == [(1, False), (0, False)]
+    assert g.is_closed() is False
+
+
+def test_tool_do_gripper_connect_other_do_write_failure_is_best_effort():
+    """A refusal clearing the other line must not block the reconnect from opening the
+    gripper on the (real, control) line."""
+    io = FakeIO()
+
+    def refuse_other(out_id, level):
+        if out_id == 1:
+            raise OSError("bus reset")
+        io.calls.append((out_id, level))
+        return True
+    io.setToolDigitalOut = refuse_other
+    g = ToolDOGripper(io_getter=lambda: io, do=0, settle_s=0.0)
+    g.connect()   # must not raise
+    assert io.calls == [(0, False)]
+    assert g.is_closed() is False
+
+
+def test_tool_do_gripper_connect_with_other_do_none_skips_the_other_line():
+    io = FakeIO()
+    g = ToolDOGripper(io_getter=lambda: io, do=0, settle_s=0.0, other_do=None)
+    g.connect()
+    assert io.calls == [(0, False)]
+
+
+def test_tool_do_gripper_custom_other_do():
+    io = FakeIO()
+    g = ToolDOGripper(io_getter=lambda: io, do=2, settle_s=0.0, other_do=3)
+    g.connect()
+    assert io.calls == [(3, False), (2, False)]
 
 
 # -------------------------------------------------------------------------- DualDOGripper

@@ -1,8 +1,17 @@
 robot: {backend: ur, ip: 147.250.35.40, calibration: hub/kit_study/configs/calibration.yaml, gripper_settle_s: 1.0, allow_example_calibration: false,
-        gripper: {kind: dual_do, close_do: 0, open_do: 1, settle_s: 1.0, hold_close: true}}
-        # Lab RG2 v2 (measured 2026-09-10/11): tool DO0 = CLOSE, DO1 = OPEN — the two directions
-        # of an H-bridge inside the gripper. (1, 1) is FORBIDDEN: it latches a gripper fault.
-        # kind: tool_do        — UR tool DO0 level; close_high selects the polarity.
+        gripper: {kind: tool_do, do: 0, close_high: true, settle_s: 5.0}}
+        # Lab RG2 v2 (measured 2026-09-11): a SINGLE-LINE level-driven gripper on tool DO0.
+        #   1. DO0 is the only control line: DO0 = 1 drives CLOSED, DO0 = 0 drives OPEN. It
+        #      travels continuously while the level is applied — full stroke takes ~7 s.
+        #      Resting at DO0 = 0 (open) is the safe idle state.
+        #   2. Tool DO1 must NEVER be written — asserting it is what latched the gripper fault
+        #      all day on 2026-09-10. `ToolDOGripper` forces it low exactly once, at connect().
+        #   3. Closing fully on air (nothing between the fingers) presses the fingertip safety
+        #      switches and latches a fault; closing onto a brick is fine. Recovery is the
+        #      wizard's "Reset gripper" button (`URBackend.reset_gripper` — a tool-voltage power
+        #      cycle plus a wake pulse, ~30 s; see RUNBOOK_robot.md §C.3).
+        # kind: dual_do must NOT be used on this robot — its `open_do` line is tool DO1, and
+        # writing it faults the gripper.
         # kind: onrobot_modbus — direct Modbus TCP to the box, bypasses the URCap:
         # gripper: {kind: onrobot_modbus, ip: 192.168.1.1, port: 502, unit_id: 65,
         #           force_n: 20.0, open_width_mm: 100.0, close_width_mm: 25.0, settle_s: 1.0}

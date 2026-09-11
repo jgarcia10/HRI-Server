@@ -67,3 +67,12 @@ def test_stop_marks_not_busy_and_disconnect():
     assert b.state().busy is False
     b.disconnect()
     assert b.state().connected is False and b.state().safety == "disconnected"
+
+
+def test_close_gripper_closes_and_reset_gripper_ends_open():
+    b, sl = make(timing={"close_gripper": 1.0, "reset_gripper": 3.0, "noise_std": 0.0})
+    b.close_gripper()
+    assert b.state().gripper_closed is True and b.state().last_skill == "close_gripper"
+    b.reset_gripper()
+    assert b.state().gripper_closed is False and b.state().last_skill == "reset_gripper"
+    assert abs(sl.total - 4.0) < 1e-9

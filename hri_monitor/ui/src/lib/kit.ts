@@ -194,6 +194,8 @@ const post = (url: string, body?: unknown) =>
 export const robotHome = () => post("/api/kit/robot/home");
 export const robotStop = () => post("/api/kit/robot/stop");
 export const robotOpenGripper = () => post("/api/kit/robot/open_gripper");
+export const robotCloseGripper = () => post("/api/kit/robot/close_gripper");
+export const robotResetGripper = () => post("/api/kit/robot/reset_gripper");
 export const robotConnect = () => post("/api/kit/robot/connect");
 export const setSupplyProfile = (p: Partial<SupplyState["profile"]>) =>
   post("/api/kit/supply/profile", p);

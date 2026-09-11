@@ -90,7 +90,22 @@ class Gripper(ABC):
 
 
 class ToolDOGripper(Gripper):
-    """Drives the OnRobot through UR tool digital output 0.
+    """Drives the OnRobot RG2 v2 through a single UR tool digital output — the lab's actual
+    wiring, measured on site 2026-09-11: a level-driven gripper, not an edge/pulse one.
+
+    * `do` (tool DO0 by default) is the only control line: driving it high commands CLOSED,
+      low commands OPEN (polarity selected by `close_high`), and the gripper travels
+      continuously while the level is held — full stroke takes ~7 s. Resting at the OPEN
+      level is the safe idle state.
+    * `other_do` (tool DO1 by default) must NEVER be written during normal operation —
+      asserting it is what latched a gripper fault for an entire day of testing
+      (2026-09-10). The only exception is `connect()`, which forces it low *once* so a stale
+      DO1 (or a leftover close level) can never survive a reconnect, then commands the
+      gripper open. Set `other_do=None` to skip this (e.g. a rig where DO1 is wired to
+      something else entirely).
+    * Closing fully on air (nothing between the fingers) presses the fingertip safety
+      switches and latches a fault; closing onto a part is fine. Recovery is the documented
+      tool-voltage power cycle plus a wake pulse — see `URBackend.reset_gripper`.
 
     `io_getter` is a callable returning the *current* RTDE IO interface (rather than the
     interface itself) so a `URBackend` reconnect — which replaces `self.io` — keeps working
@@ -100,18 +115,28 @@ class ToolDOGripper(Gripper):
     name = "tool_do"
 
     def __init__(self, io_getter, do: int = 0, settle_s: float = 1.0, sleep=time.sleep,
-                 close_high: bool = True):
+                 close_high: bool = True, other_do: int | None = 1):
         self._io_getter = io_getter
         self.do = int(do)
+        self.other_do = None if other_do is None else int(other_do)
         self.settle_s = float(settle_s)
         self._sleep = sleep
-        # Lab RG2 v2 with the tool output "controlled by user": DO0 = 0 closes, DO0 = 1 opens
-        # → close_high=False. Keep True as the default for the generic PNP-style gripper.
+        # Lab RG2 v2, measured 2026-09-11: DO0 = 1 closes, DO0 = 0 opens → close_high=True.
         self.close_high = bool(close_high)
         self._closed: bool | None = False
 
     def connect(self) -> None:
-        pass   # the RTDE IO interface is owned and (re)connected by URBackend
+        """A reconnect must never inherit a stale DO1 or a leftover close level: force the
+        other line low once (best-effort — a refusal here must not block connecting) and
+        then command the gripper open."""
+        if self.other_do is not None:
+            io = self._io_getter()
+            try:
+                io.setToolDigitalOut(self.other_do, False)
+            except Exception:
+                pass   # best-effort: DO1 must never be asserted, but a failed clear here
+                       # must not stop the reconnect from completing
+        self._set(False)
 
     def disconnect(self) -> None:
         pass
@@ -139,12 +164,22 @@ class ToolDOGripper(Gripper):
 
 
 class DualDOGripper(Gripper):
-    """Drives the OnRobot RG2 v2 as a two-line digital gripper on the UR tool connector.
+    """Drives an OnRobot RG2 v2 as a two-line digital gripper on the UR tool connector.
 
-    Measured on site 2026-09-10/11 with the tool output "controlled by user", 24 V: DO0 closes,
-    DO1 opens — the two directions of an H-bridge *inside* the gripper. (0, 0) is neutral (the
-    gripper holds position, nothing moves); (1, 1) is FORBIDDEN — it latches a gripper fault
-    that survives a power cycle (recovered only by a full controller reboot on 2026-09-10).
+    *** DO NOT USE THIS ON THE LAB ROBOT. *** Re-measured 2026-09-11: the lab's RG2 v2 is a
+    single-line, level-driven gripper (tool DO0 only — see `ToolDOGripper`). Tool DO1 must
+    NEVER be written on this robot; asserting it (as `open_do` does here) is exactly what
+    latched a gripper fault for a full day of testing on 2026-09-10. `robot.yaml` must never
+    set `gripper.kind: dual_do`. This class is kept only for a *differently* wired RG2 v2 —
+    one where DO0/DO1 genuinely are the two directions of an internal H-bridge — should that
+    ever show up on a different robot; it is exercised below purely so that wiring stays
+    correct in case it is ever needed again.
+
+    Measured on site 2026-09-10 (superseded by the single-line finding above) with the tool
+    output "controlled by user", 24 V: DO0 closes, DO1 opens — the two directions of an
+    H-bridge *inside* the gripper, as that day's wiring appeared to behave. (0, 0) is neutral
+    (the gripper holds position, nothing moves); (1, 1) is FORBIDDEN — it latches a gripper
+    fault that survives a power cycle (recovered only by a full controller reboot that day).
 
     Every direction change is therefore break-before-make: drop the line that must not be high
     first, wait `BREAK_GAP_S`, then raise the line that must be high — so the forbidden (1, 1)

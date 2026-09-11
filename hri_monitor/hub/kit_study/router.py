@@ -147,6 +147,20 @@ def build_kit_router(session: KitSession, bus, bridge=None) -> APIRouter:
         job_id = bridge.submit("open_gripper")
         return {"ok": job_id is not None, "job_id": job_id}
 
+    @r.post("/api/kit/robot/close_gripper")
+    def robot_close():
+        if bridge is None:
+            return _no_robot()
+        job_id = bridge.submit("close_gripper")
+        return {"ok": job_id is not None, "job_id": job_id}
+
+    @r.post("/api/kit/robot/reset_gripper")
+    def robot_reset_gripper():
+        if bridge is None:
+            return _no_robot()
+        job_id = bridge.submit("reset_gripper")
+        return {"ok": job_id is not None, "job_id": job_id}
+
     @r.post("/api/kit/robot/stop")
     def robot_stop():
         # The STOP button must never fail: a backend that raises still leaves the bridge

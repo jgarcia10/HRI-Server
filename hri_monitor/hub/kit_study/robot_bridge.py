@@ -5,12 +5,14 @@ only enqueue — so nobody ever blocks on robot motion inside a bus callback.
 
 Safety latch: a wizard STOP, a backend protective stop / E-stop, a robot fault (the arm
 refused or failed to move) or a safety transition seen by the idle monitor *latches* the
-bridge. While latched only the two skills that cannot move the arm are accepted — `home`
-(the resume path) and `set_pace` (N1: a profile change must still reach the backend, or the
-robot silently runs at the wrong speed after the latch clears). Every other skill is refused
-with `robot.rejected` so that nothing (SupplyController included) can put the robot back in
-motion behind the operator's back. A successful `home` clears the latch and publishes
-`robot.resumed`.
+bridge. While latched only the skills that cannot move the arm are accepted — `home` (the
+resume path), `set_pace` (N1: a profile change must still reach the backend, or the robot
+silently runs at the wrong speed after the latch clears), and `close_gripper`/`reset_gripper`
+(the gripper is single-line/level-driven and only actuates the tool, never the arm, so the
+operator must be able to release or recover it — see RUNBOOK_robot.md §C.3 — without first
+homing the arm). Every other skill is refused with `robot.rejected` so that nothing
+(SupplyController included) can put the robot back in motion behind the operator's back. A
+successful `home` clears the latch and publishes `robot.resumed`.
 """
 from __future__ import annotations
 
@@ -25,8 +27,11 @@ from .robotd.base import (Aborted, EmergencyStop, ProtectiveStop, RobotBackend, 
 
 log = logging.getLogger(__name__)
 
-# Skills that move nothing and are therefore safe to run while the bridge is latched.
-_LATCH_SAFE = ("home", "set_pace")
+# Skills that move nothing (no arm motion) and are therefore safe to run while the bridge is
+# latched. close_gripper/reset_gripper only actuate the tool — never the arm — and the operator
+# must be able to reach them right after a STOP, without first homing the arm, to release or
+# recover the gripper (URBackend clears its own stop latch for these two, same as home()).
+_LATCH_SAFE = ("home", "set_pace", "close_gripper", "reset_gripper")
 # Backend safety values that latch the bridge, mapped to the latch reason.
 _SAFETY_LATCH = {"protective_stop": "protective_stop", "estop": "emergency_stop"}
 _DISCONNECTED = {"connected": False, "backend": "?", "busy": False, "gripper_closed": False,
@@ -104,8 +109,9 @@ class RobotBridge:
     def submit(self, skill: str, **args) -> str | None:
         """Enqueue a skill. Returns None (and publishes `robot.rejected`) while latched.
 
-        `home` and `set_pace` are admitted through the latch: neither commands a motion
-        (`URBackend.set_pace`/`SimBackend.set_pace` only assign the speed profile).
+        `home`, `set_pace`, `close_gripper` and `reset_gripper` are admitted through the
+        latch: none of them commands arm motion (`set_pace` only assigns the speed profile;
+        the gripper skills only drive the tool — see `_LATCH_SAFE`).
         """
         job_id = uuid.uuid4().hex[:8]
         with self._lock:
@@ -214,6 +220,10 @@ class RobotBridge:
             b.place(args["staging_slot"])
         elif skill == "open_gripper":
             b.open_gripper()
+        elif skill == "close_gripper":
+            b.close_gripper()
+        elif skill == "reset_gripper":
+            b.reset_gripper()
         elif skill == "set_pace":
             b.set_pace(args["level"])
         else:
