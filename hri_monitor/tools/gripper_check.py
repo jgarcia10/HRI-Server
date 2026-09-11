@@ -105,10 +105,13 @@ def matrix() -> int:
     import rtde_io, rtde_receive
     recv = rtde_receive.RTDEReceiveInterface(IP); io = rtde_io.RTDEIOInterface(IP)
     st = ToolStream(IP); st.start(); time.sleep(1.5)
-    print("DO1(soft) DO0(close) | tool current  |  AI0   AI1  | tool DI seen     'awake' = ~0.13 A")
+    print("DO1(open) DO0(close) | tool current  |  AI0   AI1  | tool DI seen     moving = ~0.13 A, fault = AI1 6.4 V")
     rows = []
-    for d1 in (False, True):
-        for d0 in (False, True):
+    # NEVER (1, 1): DO0 = close and DO1 = open are the two directions of an H-bridge; asserting
+    # both latches a gripper fault that survives a power cycle (learned the hard way 2026-09-10).
+    for d1, d0 in ((False, False), (False, True), (False, False), (True, False)):
+        if True:
+            io.setToolDigitalOut(1 if d0 else 0, False); time.sleep(0.15)   # break before make
             io.setToolDigitalOut(1, d1); io.setToolDigitalOut(0, d0)
             st.samples.clear(); dis = set(); t0 = time.time()
             while time.time() - t0 < 5.0:
@@ -116,7 +119,7 @@ def matrix() -> int:
             s = list(st.samples); cur = [x["cur"] for x in s]
             rows.append(max(cur))
             print(f"   {int(d1)}         {int(d0)}      | {min(cur):.3f}-{max(cur):.3f} A | {s[-1]['ai0']:5.2f} {s[-1]['ai1']:5.2f} | {sorted(dis)}")
-    io.setToolDigitalOut(1, False); io.setToolDigitalOut(0, True)     # leave open, soft off
+    io.setToolDigitalOut(0, False); io.setToolDigitalOut(1, False)    # leave NEUTRAL: never hold a direction
     st.stop.set(); recv.disconnect(); io.disconnect()
     spread = max(rows) - min(rows)
     print(f"\n{OK if spread > 0.03 else BAD} current spread across the four combinations: {spread*1000:.0f} mA"
