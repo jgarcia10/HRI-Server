@@ -65,14 +65,25 @@ class ToolStream(threading.Thread):
 
 
 def label(td, di_bits, do_bits):
-    """Rough state label from the signatures seen on site (RG2 v2 on the CB3 tool connector)."""
+    """State label from the signatures measured on site (RG2 v2 on the CB3 tool connector).
+
+    Reference values, tool output 24 V: ready ~85 mA with AI0 ~10 V (open) and AI1 ~1.35 V;
+    travelling 126-148 mA with AI1 ~3.4 V; latched fault AI1 ~6.4 V at ~66 mA (ignores every
+    command); dark/booting AI ~0.07 V. A *low* current (~18 mA) with an otherwise ready-looking
+    AI pair means the gripper is only partly powered or inhibited (a pressed fingertip safety
+    switch, or a marginal tool-connector contact) — it will not move.
+    """
     if td["volt"] != 24:
         return "NO TOOL POWER"
-    if td["ai0"] > 9.0 and (di_bits & 0b10):
-        return "READY (initialised; DO0 should work)"
     if td["ai0"] < 1.0:
-        return "UNINITIALISED (just powered; needs the OnRobot init once)"
-    return "electronics alive, no valid handshake"
+        return "UNINITIALISED (just powered; wake it with a short DO0 pulse)"
+    if td["ai1"] > 5.0:
+        return "FAULT (latched; ignores commands — use Reset gripper)"
+    if td["cur"] < 0.05:
+        return "INHIBITED/partly powered (~18 mA): check the fingertip switches and the tool connector"
+    if td["ai1"] < 2.0:
+        return "READY (DO0 = 1 closes, DO0 = 0 opens)"
+    return "travelling"
 
 
 def watch() -> int:
