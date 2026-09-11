@@ -97,7 +97,8 @@ class URBackend(RobotBackend):
     name = "ur5"
 
     def __init__(self, ip: str, calibration: dict, speeds: dict | None = None,
-                 gripper_settle_s: float = 1.0, rtde_factory=None,
+                 gripper_settle_s: float = 1.0, gripper_open_settle_s: float | None = None,
+                 rtde_factory=None,
                  gripper: Gripper | Callable | None = None, gripper_close_high: bool = True,
                  poll_s: float = POLL_S, move_timeout_s: float = MOVE_TIMEOUT_S,
                  stop_timeout_s: float = STOP_TIMEOUT_S, reach_grace_s: float = REACH_GRACE_S,
@@ -109,7 +110,12 @@ class URBackend(RobotBackend):
         self.ip = ip
         self.cal = calibration
         self.speeds = speeds or DEFAULT_SPEEDS
+        # Closing starts from fully open (~110 mm) and the jaws travel the whole stroke in
+        # ~7 s, so reaching a 32 mm brick needs ~6-8 s; opening only has to clear the brick,
+        # which is a second or two. One wait for each, so releasing does not cost a close.
         self.settle = float(gripper_settle_s)
+        self.open_settle = float(gripper_open_settle_s if gripper_open_settle_s is not None
+                                 else gripper_settle_s)
         self._factory = rtde_factory or _default_factory
         # `settle_s=0.0`: URBackend does its own *interruptible* settle wait (see
         # _approach_and/open_gripper) so the default gripper must not sleep twice.
@@ -363,7 +369,8 @@ class URBackend(RobotBackend):
             self.gripper.close()
         else:
             self.gripper.open()
-        if self.settle and self._abort.wait(self.settle):
+        wait = self.settle if close else self.open_settle
+        if wait and self._abort.wait(wait):
             raise Aborted("motion stopped by stop() during gripper settle")
         self._moveL(above)
 
@@ -397,7 +404,7 @@ class URBackend(RobotBackend):
     def open_gripper(self) -> None:
         def _open():
             self.gripper.open()
-            if self.settle and self._abort.wait(self.settle):
+            if self.open_settle and self._abort.wait(self.open_settle):
                 raise Aborted("motion stopped by stop() during gripper settle")
         self._run("open_gripper", _open)
 

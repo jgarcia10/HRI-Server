@@ -38,7 +38,7 @@ def main() -> int:
     ap.add_argument("--pace", default="slow", choices=["slow", "normal"])
     ap.add_argument("--no-gripper", action="store_true", help="move only; never touch the jaws")
     ap.add_argument("--no-home", action="store_true", help="skip the initial home()")
-    ap.add_argument("--settle", type=float, default=6.5,
+    ap.add_argument("--settle", type=float, default=8.5,
                     help="seconds the gripper is given to travel (jaws start fully open ~110 mm; "
                          "reaching a 32 mm brick needs ~5 s of the ~7 s full stroke)")
     ap.add_argument("--yes", action="store_true", help="do not pause between slots")
@@ -50,7 +50,7 @@ def main() -> int:
 
     cfg = load_mode("robot", overrides={"robot": {"ip": args.ip}} if args.ip else None)
     backend = build_backend(cfg)
-    backend.settle = float(args.settle)
+    backend.settle = float(args.settle)          # closing: jaws travel from fully open
     if args.no_gripper:                      # swap in a no-op actuator, jaws never move
         class _Frozen:
             name = "frozen"
@@ -62,7 +62,8 @@ def main() -> int:
             def grip_detected(self): return None
         backend.gripper = _Frozen()
 
-    print(f"conectando a {backend.ip} …  (gripper settle {backend.settle:.1f} s, ritmo {args.pace})")
+    print(f"conectando a {backend.ip} …  (cierre {backend.settle:.1f} s · apertura "
+          f"{backend.open_settle:.1f} s · ritmo {args.pace})")
     backend.connect()
     backend.set_pace(args.pace)
     ok, failed = [], []

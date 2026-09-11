@@ -108,6 +108,8 @@ def build_backend(mode_cfg: dict) -> RobotBackend:
         gcfg = r.get("gripper") or {}
         return URBackend(robot_ip, cal,
                          gripper_settle_s=float(r.get("gripper_settle_s", 1.0)),
+                         gripper_open_settle_s=(float(r["gripper_open_settle_s"])
+                                                if "gripper_open_settle_s" in r else None),
                          gripper=build_gripper(gcfg, robot_ip=robot_ip),
                          gripper_close_high=bool(gcfg.get("close_high", True)))
     raise ValueError(f"unknown robot backend {r['backend']!r}")
